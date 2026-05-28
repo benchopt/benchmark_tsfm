@@ -88,7 +88,6 @@ class Dataset(BaseDataset):
 
     parameters = {
         "window_size_samples": [3000],
-        "sub_ids": range(1, 83),
         "mapping": {  # We merge stages 3 and 4 following AASM standards.
             "Sleep stage W": 0,
             "Sleep stage 1": 1,
@@ -108,7 +107,7 @@ class Dataset(BaseDataset):
 
         # Allow reuse of the download helper from benchmark_ad if present,
         # otherwise fall back to the data path directly.
-
+        sub_ids = range(1, 83)
         preprocessors = [
             Preprocessor(lambda data: np.multiply(data, self.factor)),
             Preprocessor(
@@ -118,7 +117,7 @@ class Dataset(BaseDataset):
         ]
 
         X_all, y_all = [], []
-        sub_ids = self.sub_ids[:2] if self.debug else self.sub_ids
+        sub_ids = sub_ids[:2] if self.debug else self.sub_ids
         for sub_id in sub_ids:
             if sub_id in [39, 68, 69, 78, 79]:
                 continue
