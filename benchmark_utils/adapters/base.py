@@ -41,12 +41,13 @@ class BaseTSFMAdapter(ABC):
         """
 
 
-class BaseEncoder(ABC):
-    """Frozen feature extractor.
+class UnpooledEncoder(ABC):
+    """Frozen feature extractor returning *unpooled* embeddings.
 
-    Subclasses must implement ``encode``.  Encoders produce *unpooled*
-    embeddings; downstream code (pooler / linear head) decides how to
-    reduce them.
+    Subclasses must implement ``encode``.  The returned per-token
+    embedding sequence is consumed by a ``Pooler`` (see
+    :mod:`benchmark_utils.adapters.encoder`) before reaching a linear
+    head; this class deliberately does not pool.
     """
 
     @abstractmethod

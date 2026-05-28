@@ -21,7 +21,7 @@ import torch
 from benchopt import BaseSolver
 from chronos import ChronosPipeline
 
-from benchmark_utils.adapters import BaseEncoder
+from benchmark_utils.adapters import UnpooledEncoder
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 
 
@@ -77,7 +77,7 @@ def _to_context_tensor(x: np.ndarray):
     return torch.from_numpy(x.T)
 
 
-class _ChronosEmbedEncoder(BaseEncoder):
+class _ChronosEmbedEncoder(UnpooledEncoder):
     """Default path — uses ``ChronosPipeline.embed``.
 
     Returns hidden states *after* ``encoder.final_layer_norm``.
@@ -94,7 +94,7 @@ class _ChronosEmbedEncoder(BaseEncoder):
         return embeddings.transpose(0, 1).float().cpu().numpy()
 
 
-class _ChronosHookEncoder(BaseEncoder):
+class _ChronosHookEncoder(UnpooledEncoder):
     """Layer-specific path — forward hook on ``encoder.block[layer]``.
 
     Returns the *pre-norm* hidden state at the chosen block. Negative
@@ -139,7 +139,7 @@ class _ChronosHookEncoder(BaseEncoder):
         return captured["h"].transpose(0, 1).float().cpu().numpy()
 
 
-def ChronosEncoder(pipeline: ChronosPipeline, layer: int | None = None) -> BaseEncoder:
+def ChronosEncoder(pipeline: ChronosPipeline, layer: int | None = None) -> UnpooledEncoder:
     """Build a Chronos feature extractor.
 
     Parameters
@@ -155,7 +155,7 @@ def ChronosEncoder(pipeline: ChronosPipeline, layer: int | None = None) -> BaseE
 
     Returns
     -------
-    BaseEncoder
+    UnpooledEncoder
         Object exposing ``encode(x: np.ndarray (T, C)) -> np.ndarray
         (T_tok, C, D)``. Embeddings are *not* pooled.
 
