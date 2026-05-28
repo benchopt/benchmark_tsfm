@@ -65,7 +65,6 @@ class LinearProbeAdapter(BaseTSFMAdapter):
                         LogisticRegression(
                             penalty=self.penalty,
                             max_iter=self.max_iter,
-                            multi_class="auto",
                         ),
                     )
                 case "ridge_regression":
