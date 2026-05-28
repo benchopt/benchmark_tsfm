@@ -13,7 +13,7 @@ Usage
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression, RidgeRegression
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
@@ -70,7 +70,7 @@ class LinearProbeAdapter(BaseTSFMAdapter):
                 case "ridge_regression":
                     self._head = make_pipeline(
                         StandardScaler(),
-                        RidgeRegression(
+                        RidgeClassifier(
                             max_iter=self.max_iter,
                             random_state=42,
                         ),
