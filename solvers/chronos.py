@@ -106,8 +106,8 @@ class _ChronosHookEncoder(UnpooledEncoder):
 
     def encode(self, x: np.ndarray) -> np.ndarray:
         context = _to_context_tensor(x)  # (C, T)
-        token_ids, attn_mask, _ = self.pipeline.tokenizer.context_input_transform(
-            context
+        token_ids, attn_mask, _ = (
+            self.pipeline.tokenizer.context_input_transform(context)
         )
         device = self.pipeline.model.device
         token_ids = token_ids.to(device)
@@ -230,7 +230,9 @@ class Solver(BaseSolver):
             self._adapter = forecaster
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
+            self._adapter = ForecastResidualAdapter(
+                forecaster, prediction_length=1
+            )
 
     def get_result(self):
         return {"model": self._adapter}
