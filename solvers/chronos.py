@@ -131,7 +131,9 @@ class Solver(BaseSolver):
             self._adapter = forecaster
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
+            self._adapter = ForecastResidualAdapter(
+                forecaster, prediction_length=1
+            )
 
     def get_result(self):
         return {"model": self._adapter}
