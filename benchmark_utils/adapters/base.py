@@ -7,16 +7,17 @@ Predict signature by task
 --------------------------
 forecasting:
 
-    predict(x: ForecastInput) -> Sequence[ForecastOutput]
+    predict(x: ForecastInput) -> ForecastOutput
 
   :class:`~benchmark_utils.inputs.ForecastInput` bundles the per-series
   history list, the jagged per-series cutoff indexes, and a
   :class:`~benchmark_utils.covariates.Covariates` dataclass.
 
-  :class:`~benchmark_utils.outputs.ForecastOutput` carries the
-  quantile-resolved forecast — shape
-  ``(n_cutoffs, Q, prediction_length, C)`` plus the matching quantile
-  levels. Point forecasters set ``quantile_levels=(0.5,)`` and Q=1.
+  :class:`~benchmark_utils.outputs.ForecastOutput` is a single object
+  covering every input series — its ``quantiles`` field is a Sequence
+  of ``(n_cutoffs_i, Q, prediction_length, C)`` arrays, one per series,
+  with a shared ``quantile_levels`` tuple. Point forecasters set
+  ``quantile_levels=(0.5,)`` and Q=1.
 
   ``prediction_length`` is dataset-level — the solver reads it from the
   objective and wires it into the adapter at construction time.

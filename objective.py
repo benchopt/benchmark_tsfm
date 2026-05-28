@@ -114,7 +114,7 @@ class Objective(BaseObjective):
     def _eval_forecasting(self, model):
         from benchmark_utils.inputs import ForecastInput
 
-        outputs_per_series = model.predict(
+        output = model.predict(
             ForecastInput(
                 x=self.X_test,
                 cutoff_indexes=self.cutoff_indexes,
@@ -123,8 +123,8 @@ class Objective(BaseObjective):
         )
 
         preds, targets = [], []
-        for series_output, series_targets in zip(outputs_per_series, self.y_test):
-            sp = np.asarray(series_output.point)  # (n_cutoffs, H, C)
+        for series_point, series_targets in zip(output.point, self.y_test):
+            sp = np.asarray(series_point)  # (n_cutoffs, H, C)
             st = np.asarray(series_targets)
             for k in range(sp.shape[0]):
                 preds.append(sp[k])
@@ -182,12 +182,11 @@ class Objective(BaseObjective):
             def predict(self, x):
                 if self._task == "forecasting":
                     H = self._prediction_length
-                    outs = []
+                    qs = []
                     for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
-                        q = np.zeros((len(cutoffs), 1, H, C), dtype=np.float32)
-                        outs.append(ForecastOutput(quantiles=q, quantile_levels=(0.5,)))
-                    return outs
+                        qs.append(np.zeros((len(cutoffs), 1, H, C), dtype=np.float32))
+                    return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
                 elif self._task == "classification":
                     return np.zeros(len(x), dtype=np.int64)
                 elif self._task == "anomaly_detection":

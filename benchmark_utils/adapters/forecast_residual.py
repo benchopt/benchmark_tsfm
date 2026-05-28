@@ -57,8 +57,8 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
         try:
             output = self.forecaster.predict(
                 ForecastInput(x=[x], cutoff_indexes=[cutoffs])
-            )[0]
-            preds = output.point  # (n_cutoffs, H, C)
+            )
+            preds = output.point[0]  # (n_cutoffs, H, C)
         except Exception:
             return scores
 

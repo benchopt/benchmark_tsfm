@@ -1,11 +1,10 @@
-"""Typed outputs returned by forecasting adapters.
+"""Typed output returned by forecasting adapters.
 
-Forecasting predict() returns ``Sequence[ForecastOutput]`` — one entry
-per input series. Each ``ForecastOutput`` carries a quantile-resolved
-forecast with shape ``(n_cutoffs, Q, prediction_length, C)`` plus the
-quantile levels themselves. Point forecasters set ``quantile_levels =
-(0.5,)`` and Q=1; probabilistic forecasters can return as many quantiles
-as their model produces.
+Forecasting predict() returns a single :class:`ForecastOutput` covering
+every input series in the matching :class:`ForecastInput`. The output is
+shape-aware: ``quantiles[i]`` is the per-series ndarray
+``(n_cutoffs_i, Q, prediction_length, C)``, aligned with the same index
+order as the input ``x``.
 """
 
 from dataclasses import dataclass
@@ -16,40 +15,45 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ForecastOutput:
-    """Per-series forecast.
+    """Quantile-resolved forecast for a batch of series.
 
     Attributes
     ----------
-    quantiles : np.ndarray
-        Shape ``(n_cutoffs, Q, prediction_length, C)``. ``quantiles[k, q]``
-        is the forecast for the k-th cutoff at quantile level
+    quantiles : sequence of np.ndarray
+        One ndarray per series, each shape
+        ``(n_cutoffs_i, Q, prediction_length, C)``. ``quantiles[i][k, q]``
+        is the forecast for series ``i``, cutoff ``k``, at quantile level
         ``quantile_levels[q]``.
     quantile_levels : sequence of float
-        Length ``Q``. Each entry is a quantile level in (0, 1).
+        Length ``Q``. Each entry is a quantile level in (0, 1). The same
+        ``Q`` applies to every series in the batch.
     """
 
-    quantiles: np.ndarray
+    quantiles: Sequence[np.ndarray]
     quantile_levels: Sequence[float]
 
     def __post_init__(self):
-        if self.quantiles.ndim != 4:
-            raise ValueError(
-                f"quantiles must have ndim=4 (n_cutoffs, Q, prediction_length, C); "
-                f"got shape {self.quantiles.shape}"
-            )
-        if self.quantiles.shape[1] != len(self.quantile_levels):
-            raise ValueError(
-                f"quantiles.shape[1] ({self.quantiles.shape[1]}) must equal "
-                f"len(quantile_levels) ({len(self.quantile_levels)})"
-            )
+        Q = len(self.quantile_levels)
+        for i, arr in enumerate(self.quantiles):
+            if arr.ndim != 4:
+                raise ValueError(
+                    f"quantiles[{i}] must have ndim=4 "
+                    f"(n_cutoffs, Q, prediction_length, C); got shape {arr.shape}"
+                )
+            if arr.shape[1] != Q:
+                raise ValueError(
+                    f"quantiles[{i}].shape[1] ({arr.shape[1]}) must equal "
+                    f"len(quantile_levels) ({Q})"
+                )
 
     @property
-    def point(self) -> np.ndarray:
-        """Best point estimate — median when available, else mean over quantiles.
+    def point(self) -> Sequence[np.ndarray]:
+        """Best point estimate per series — median when available, else mean across quantiles.
 
-        Shape: ``(n_cutoffs, prediction_length, C)``.
+        Each entry has shape ``(n_cutoffs_i, prediction_length, C)``.
         """
         levels = list(self.quantile_levels)
         if 0.5 in levels:
-            return self.quantiles[:, levels.index(0.5), :, :]
-        return self.quantiles.mean(axis=1)
+            idx = levels.index(0.5)
+            return [arr[:, idx, :, :] for arr in self.quantiles]
+        return [arr.mean(axis=1) for arr in self.quantiles]

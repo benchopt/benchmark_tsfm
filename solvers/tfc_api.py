@@ -105,7 +105,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         self.country_isocode = country_isocode
         self.batch_size = batch_size
 
-    def predict(self, x: ForecastInput):
+    def predict(self, x: ForecastInput) -> ForecastOutput:
         # TODO: thread ``x.covariates`` (static/hist/future) through to the SDK
         # once the benchmark datasets populate them. Monash currently
         # carries none, so the dataclass arrives with empty sequences.
@@ -114,11 +114,18 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
 
         offsets = _shared_offsets_from_end(series_list, cutoff_indexes)
         if getattr(self.model, "supports_batching", False) and offsets is not None:
-            return self._predict_batched(series_list, cutoff_indexes, pd_freq, offsets)
-        return self._predict_per_series(series_list, cutoff_indexes, pd_freq)
+            per_series, levels = self._predict_batched(
+                series_list, cutoff_indexes, pd_freq, offsets
+            )
+        else:
+            per_series, levels = self._predict_per_series(
+                series_list, cutoff_indexes, pd_freq
+            )
+        return ForecastOutput(quantiles=per_series, quantile_levels=levels)
 
     def _predict_per_series(self, x, cutoff_indexes, pd_freq):
-        results = []
+        per_series = []
+        levels = None
         for series_idx, (series, cutoffs) in enumerate(zip(x, cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
             if series.ndim == 1:
@@ -151,10 +158,12 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 batch_size=self.batch_size,
             )
 
-            results.append(self._gather_series_output(
+            arr, series_levels = self._gather_series_output(
                 forecast_df, series_idx, C, cutoffs, fcds
-            ))
-        return results
+            )
+            per_series.append(arr)
+            levels = series_levels
+        return per_series, (levels if levels is not None else (0.5,))
 
     def _predict_batched(self, x, cutoff_indexes, pd_freq, offsets):
         """One ``cross_validate`` call covering every series in ``x``.
@@ -203,13 +212,16 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             batch_size=self.batch_size,
         )
 
-        results = []
+        per_series = []
+        levels = None
         for series_idx, C, index, cutoffs in per_series_meta:
             series_fcds = [pd.Timestamp(index[cutoff]) for cutoff in cutoffs]
-            results.append(self._gather_series_output(
+            arr, series_levels = self._gather_series_output(
                 forecast_df, series_idx, C, cutoffs, series_fcds
-            ))
-        return results
+            )
+            per_series.append(arr)
+            levels = series_levels
+        return per_series, (levels if levels is not None else (0.5,))
 
     def _gather_series_output(self, forecast_df, series_idx, C, cutoffs, fcds):
         # Discover which quantile columns the SDK returned; fall back to
@@ -239,7 +251,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(self.prediction_length)
                 for q_idx, col in enumerate(quantile_cols):
                     preds[k, q_idx, :, c] = window[col].to_numpy(dtype=np.float32)
-        return ForecastOutput(quantiles=preds, quantile_levels=tuple(levels))
+        return preds, tuple(levels)
 
 
 class Solver(BaseSolver):

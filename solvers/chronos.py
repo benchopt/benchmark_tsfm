@@ -1,24 +1,23 @@
-"""Chronos solver for the TSFM benchmark.
+"""Chronos-2 solver for the TSFM benchmark (local inference).
 
 Supports:
-  - forecasting        : zero-shot via ChronosPipeline
-  - anomaly_detection  : forecast-residual (zero-shot)
+  - forecasting        : zero-shot via ``Chronos2Pipeline``
+  - anomaly_detection  : forecast-residual on top of the same forecaster
 
 Classification is not yet implemented; the solver skips that task.
 
-Model loading is done in ``set_objective`` (untimed).
-Adaptation fitting is done in ``run`` (timed).
-
-Adding a new task
------------------
-1. Add the task name to ``SUPPORTED_TASKS``.
-2. In ``run``, instantiate the appropriate adapter from
-   ``benchmark_utils.adapters`` (or implement a new one there).
+Model loading is done in ``set_objective`` (untimed). Inference batches
+every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
+call — the pipeline accepts a list of variable-length tensors and
+applies left-padding internally, so all the per-cutoff work happens in
+one forward pass.
 """
 
 import numpy as np
+import torch
 from benchopt import BaseSolver
 
+from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
@@ -27,67 +26,66 @@ from benchmark_utils.outputs import ForecastOutput
 SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 
 
-# ---------------------------------------------------------------------------
-# Thin wrapper exposing the predict() interface expected by the objective
-# ---------------------------------------------------------------------------
-
-class _ChronosForecaster:
-    """Wraps ChronosPipeline with the batched series+cutoffs predict API."""
+class _ChronosForecaster(BaseTSFMAdapter):
+    """Batched Chronos-2 adapter returning a full quantile fan."""
 
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
+        self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
 
-    def predict(self, x: ForecastInput):
-        import torch
-
-        results = []
-        for series, cutoffs in zip(x.x, x.cutoff_indexes):
+    def predict(self, x: ForecastInput) -> ForecastOutput:
+        inputs = []
+        layout = []              # (series_idx, cutoff_idx) per input element
+        per_series_shape = []    # (C, n_cutoffs) per series
+        for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
-            C = series.shape[1] if series.ndim == 2 else 1
-            out = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
-            for k, cutoff in enumerate(cutoffs):
-                hist = series[:cutoff]
-                if hist.ndim == 1:
-                    hist = hist[:, None]
-                # Chronos expects (batch, time) — one channel at a time.
-                for c in range(C):
-                    context = torch.from_numpy(hist[:, c]).unsqueeze(0)
-                    forecast = self.pipeline.predict(
-                        context,
-                        prediction_length=self.prediction_length,
-                    )
-                    f = forecast[0]
-                    if f.ndim == 2:
-                        f = f.median(dim=0).values
-                    out[k, :, c] = f.numpy()
-            results.append(ForecastOutput(
-                quantiles=out[:, None, :, :],
-                quantile_levels=(0.5,),
-            ))
-        return results
+            if series.ndim == 1:
+                series = series[:, None]
+            _, C = series.shape
+            per_series_shape.append((C, len(cutoffs)))
+            for cutoff_idx, cutoff in enumerate(cutoffs):
+                hist = series[:cutoff]                   # (T_cutoff, C)
+                inputs.append(torch.from_numpy(hist.T))  # (C, T_cutoff)
+                layout.append((series_idx, cutoff_idx))
 
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
 
-# ---------------------------------------------------------------------------
-# Solver
-# ---------------------------------------------------------------------------
+        with torch.no_grad():
+            forecast = self.pipeline.predict(
+                inputs,
+                prediction_length=self.prediction_length,
+            )
+        # forecast: list[(n_variates, Q, prediction_length)] aligned with `inputs`.
+
+        Q = len(self.quantile_levels)
+        per_series = [
+            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            for C, n_cutoffs in per_series_shape
+        ]
+        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
+            arr = pred.float().cpu().numpy()                # (C, Q, H)
+            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+        return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
+
 
 class Solver(BaseSolver):
-    """Chronos zero-shot solver.
+    """Chronos-2 zero-shot solver.
 
     Parameters
     ----------
     model_size : str
-        Chronos model variant: "tiny", "mini", "small", "base", "large".
+        Chronos-2 variant suffix used in ``autogluon/chronos-2-{model_size}``.
     task_adaptation : str
-        How to use Chronos for each task:
-          "zeroshot"          — direct forecasting API (forecasting only)
-          "forecast_residual" — anomaly score = forecast error (AD only)
+        Per-task usage of the forecaster:
+          ``"zeroshot"``          — direct forecasting (forecasting only)
+          ``"forecast_residual"`` — anomaly score = forecast error (AD only)
     """
 
     name = "Chronos"
 
-    requirements = ["pip::chronos-forecasting>=1.4", "pip::torch"]
+    requirements = ["pip::chronos-forecasting>=2.0", "pip::torch"]
 
     sampling_strategy = "run_once"
 
@@ -101,36 +99,32 @@ class Solver(BaseSolver):
             return True, f"Chronos solver does not support task={task!r}"
         return False, None
 
-    # ------------------------------------------------------------------
-
     def set_objective(self, X_train, y_train, task, **meta):
-        import torch
-        from chronos import ChronosPipeline
+        from chronos import Chronos2Pipeline
 
         self.task = task
         self.X_train = X_train
         self.meta = meta
 
-        # Load model once; reuse across consecutive dataset configs.
-        model_id = f"amazon/chronos-t5-{self.model_size}"
+        # bfloat16 is fine on CUDA but poorly supported on CPU / MPS;
+        # fall back to float32 there so inference doesn't crash or stall.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        model_id = f"autogluon/chronos-2-{self.model_size}"
         if not hasattr(self, "_pipeline") or self._loaded_model != model_id:
-            self._pipeline = ChronosPipeline.from_pretrained(
+            self._pipeline = Chronos2Pipeline.from_pretrained(
                 model_id,
-                device_map="auto",
-                torch_dtype=torch.bfloat16,
+                device_map=device,
+                dtype=dtype,
             )
             self._loaded_model = model_id
 
     def run(self, _):
         pred_len = self.meta.get("prediction_length", 1)
-        forecaster = _ChronosForecaster(self._pipeline, pred_len)
-
         if self.task == "forecasting":
-            self._adapter = forecaster
-
+            self._adapter = _ChronosForecaster(self._pipeline, pred_len)
         elif self.task == "anomaly_detection":
-            # AD uses one-step-ahead forecasts; rebuild the forecaster
-            # with prediction_length=1 to match.
+            # AD uses one-step-ahead forecasts.
             self._adapter = ForecastResidualAdapter(
                 _ChronosForecaster(self._pipeline, prediction_length=1),
                 prediction_length=1,

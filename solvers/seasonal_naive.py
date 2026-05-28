@@ -30,8 +30,8 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
         self.prediction_length = prediction_length
         self.season_length = season_length
 
-    def predict(self, x: ForecastInput):
-        results = []
+    def predict(self, x: ForecastInput) -> ForecastOutput:
+        quantiles = []
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
@@ -42,11 +42,8 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
                 pattern = hist[-season:]
                 reps = int(np.ceil(self.prediction_length / season))
                 preds[k] = np.tile(pattern, (reps, 1))[:self.prediction_length]
-            results.append(ForecastOutput(
-                quantiles=preds[:, None, :, :],
-                quantile_levels=(0.5,),
-            ))
-        return results
+            quantiles.append(preds[:, None, :, :])
+        return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
 
 class Solver(BaseSolver):
