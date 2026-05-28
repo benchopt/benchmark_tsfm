@@ -107,6 +107,7 @@ class Dataset(BaseDataset):
         y_test = np.concatenate(
             [y_all[i] for i in range(len(y_all)) if i not in ids_train]
         )
+        np.unique(y_train), np.unique(y_test)  # sanity check
         return dict(
             X_train=X_train,
             y_train=y_train,
@@ -114,5 +115,5 @@ class Dataset(BaseDataset):
             y_test=y_test,
             task="classification",
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
-            n_classes=5,
+            n_classes=len(np.unique(y_train)),
         )
