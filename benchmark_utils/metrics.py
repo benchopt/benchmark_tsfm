@@ -230,17 +230,31 @@ def _merge_segments(segments, window, n):
 
 
 def _range_auc_volume(labels, score, window_size, thre=250):
-    """Compute (VUS_ROC, VUS_PR) for one (labels, score) pair."""
+    """Compute (VUS_ROC, VUS_PR) for one (labels, score) pair.
+
+    Vectorized port of `metricor.RangeAUC_volume_opt`. Algebraic identity
+    used: TP = dot(labels_ext, pred), N_labels = P + TP - dot(labels, pred).
+    Threshold sweep is vectorized via a cumulative sum of labels_ext in
+    descending score order. Existence count uses per-segment max-score
+    plus searchsorted.
+    """
     labels = np.asarray(labels)
     score = np.asarray(score, dtype=float)
     n = len(labels)
-    P = labels.sum()
+    P = float(labels.sum())
     seq = _segments(labels)
-    l_full = _merge_segments(seq, window_size, n)
 
+    # Constant across windows: threshold values and N_pred per threshold.
     score_sorted = -np.sort(-score)
-    thresholds_idx = np.linspace(0, n - 1, thre).astype(int)
-    N_pred = np.array([(score >= score_sorted[i]).sum() for i in thresholds_idx])
+    score_asc = score_sorted[::-1]
+    thresholds = score_sorted[np.linspace(0, n - 1, thre).astype(int)]
+    ks = n - np.searchsorted(score_asc, thresholds, side="left")
+
+    # Constant across windows: TP_strict = dot(labels, pred) per threshold,
+    # via cumulative sum of binary labels in descending score order.
+    order = np.argsort(-score, kind="stable")
+    B_cum = np.cumsum(labels[order].astype(float))
+    TP_strict = B_cum[ks - 1]
 
     auc = np.zeros(window_size + 1)
     ap = np.zeros(window_size + 1)
@@ -249,47 +263,35 @@ def _range_auc_volume(labels, score, window_size, thre=250):
         labels_ext = _extend_labels(labels, seq, w)
         L = _merge_segments(seq, w, n)
 
+        TP = np.cumsum(labels_ext[order])[ks - 1]
+        N_labels = P + TP - TP_strict
+        P_new = (P + N_labels) / 2
+        N_new = n - P_new
+
+        # P_new >= P > 0 (labels_ext >= labels) and N_new > 0 for any non-
+        # pathological input, so plain division is safe here.
+        recall = np.minimum(TP / P_new, 1.0)
+        fpr = (ks - TP) / N_new
+        precision = TP / ks
+
+        if L:
+            max_scores = np.sort(np.array([score[s:e + 1].max() for s, e in L]))
+            existence = len(L) - np.searchsorted(max_scores, thresholds, side="left")
+            existence_ratio = existence / len(L)
+        else:
+            existence_ratio = np.zeros(thre)
+
+        tpr = recall * existence_ratio
+
         tf = np.zeros((thre + 2, 2))
-        prec = np.ones(thre + 1)
-
-        for j, i in enumerate(thresholds_idx, start=1):
-            pred = score >= score_sorted[i]
-            lab = labels_ext.copy()
-            existence = 0
-            for s, e in L:
-                lab[s : e + 1] = labels_ext[s : e + 1] * pred[s : e + 1]
-                if pred[s : e + 1].any():
-                    existence += 1
-            for s, e in seq:
-                lab[s : e + 1] = 1
-
-            TP = 0.0
-            N_labels = 0.0
-            for s, e in l_full:
-                TP += np.dot(lab[s : e + 1], pred[s : e + 1])
-                N_labels += lab[s : e + 1].sum()
-
-            FP = N_pred[j - 1] - TP
-            existence_ratio = existence / len(L) if L else 0.0
-
-            P_new = (P + N_labels) / 2
-            recall = min(TP / P_new, 1) if P_new > 0 else 0.0
-            tpr = recall * existence_ratio
-            fpr = FP / (n - P_new) if (n - P_new) > 0 else 0.0
-            precision = TP / N_pred[j - 1] if N_pred[j - 1] > 0 else 0.0
-
-            tf[j] = (tpr, fpr)
-            prec[j] = precision
-
+        tf[1:thre + 1, 0] = tpr
+        tf[1:thre + 1, 1] = fpr
         tf[-1] = (1, 1)
+        prec = np.ones(thre + 1)
+        prec[1:] = precision
 
-        width = tf[1:, 1] - tf[:-1, 1]
-        height = (tf[1:, 0] + tf[:-1, 0]) / 2
-        auc[w] = np.dot(width, height)
-
-        width_pr = tf[1:-1, 0] - tf[:-2, 0]
-        height_pr = prec[1:]
-        ap[w] = np.dot(width_pr, height_pr)
+        auc[w] = np.dot(tf[1:, 1] - tf[:-1, 1], (tf[1:, 0] + tf[:-1, 0]) / 2)
+        ap[w] = np.dot(tf[1:-1, 0] - tf[:-2, 0], prec[1:])
 
     return float(auc.mean()), float(ap.mean())
 
