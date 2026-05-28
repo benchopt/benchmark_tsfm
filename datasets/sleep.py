@@ -1,110 +1,157 @@
-"""ECG anomaly detection dataset from TSB-UAD.
+"""Sleep classification dataset from Sleep Physionet.
 
-Wraps the ECG recordings from the MIT-BIH / TSB-UAD benchmark.
+Wraps the sleep recordings from the Sleep Physionet.
 Each recording is split into a training portion (first 10 %) and a test
-portion.  Labels are point-level binary anomaly indicators.
+portion.
+Labels are from 0 to 4, corresponding to the sleep stages W, N1, N2, N3, REM.
 
 Data contract output
 --------------------
-X_train : List[np.ndarray (T_i, C)]   training portions  (C == 1)
-y_train : None                         unsupervised task
-X_test  : List[np.ndarray (T_j, C)]   test portions
-y_test  : List[np.ndarray (T_j,)]     point-level binary labels
-task    : "anomaly_detection"
-metrics : ["auc_roc", "auc_pr", "f1_pa"]
+X_train : List[np.ndarray (T, C)]   one array per training sample
+y_train : np.ndarray (N,) int       class labels
+X_test  : List[np.ndarray (T, C)]
+y_test  : np.ndarray (M,) int
+task    : "classification"
+metrics : ["accuracy", "balanced_accuracy", "f1_weighted"]
+n_classes : int
 """
 
 import numpy as np
-import pandas as pd
-from pathlib import Path
+from braindecode.datasets import SleepPhysionet
+from braindecode.preprocessing.preprocess import preprocess, Preprocessor
+
+from braindecode.preprocessing.windowers import create_windows_from_events
+from sklearn.preprocessing import scale as standard_scale
 
 from benchopt import BaseDataset
-from benchopt.config import get_data_path
-from benchmark_utils.download import fetch_tsb_uad
 
 
-def _load_records(db_path, record_ids, number):
-    db_path = Path(db_path)
-    if record_ids in (None, "all", ["all"]):
-        record_ids = [f.stem for f in db_path.glob("*.out")
-                      if f.stem != "MBA_ECG14046_data"]
-    if number > 0:
-        record_ids = record_ids[:number]
+def _load_subject(
+    sub_id, preprocessors, mapping=None, window_size_samples=3000
+):
 
-    X_list, y_list = [], []
-    for rid in record_ids:
-        path = db_path / f"{rid}.out"
-        if not path.exists():
-            continue
-        data = pd.read_csv(path, header=None).dropna().to_numpy()
-        if data.shape[1] < 2:
-            continue
-        X_list.append(data[:, 0].astype(np.float32))
-        y_list.append(data[:, 1].astype(np.int32))
-    return X_list, y_list
+    dataset = SleepPhysionet(subject_ids=[sub_id], crop_wake_mins=30)
+
+    preprocess(dataset, preprocessors)
+    windows_dataset = create_windows_from_events(
+        dataset,
+        trial_start_offset_samples=0,
+        trial_stop_offset_samples=0,
+        window_size_samples=window_size_samples,
+        window_stride_samples=window_size_samples,
+        preload=True,
+        mapping=mapping,
+    )
+
+    preprocess(
+        windows_dataset, [Preprocessor(standard_scale, channel_wise=True)]
+    )
+    all_labels = []
+    all_data = []
+    for i, x in enumerate(windows_dataset):
+        label = x[1]
+        all_labels.append(label)
+
+        data = x[0]
+        all_data.append(data)
+    return np.concatenate(all_data), all_labels
 
 
 class Dataset(BaseDataset):
-    """ECG anomaly detection dataset (TSB-UAD).
+    """Sleep classification dataset (TSB-UAD).
 
     Parameters
     ----------
-    record_ids : list of str or "all"
-        Which ECG recordings to include.
+    window_size_samples : int
+        Length of the windows to split the recordings into.
+    sub_ids : List[int]
+        Subject IDs to include (from 1 to 82, excluding 39, 68, 69, 78, 79).
+    mapping : dict
+        Mapping from the original sleep stage labels to integers.
+        We merge stages 3 and 4 following AASM standards.
+    n_jobs : int
+        Number of parallel jobs to use for preprocessing.
     debug : bool
-        If True, truncate each recording to 5000 timesteps for fast iteration.
-    number : int
-        Maximum number of recordings to load (-1 = all).
+        If True, keep only the first 5000 samples
+        of each recording for fast testing.
+    high_cut_hz : float
+        If not None, apply a low-pass filter with this cutoff frequency (in Hz)
+        to the raw signals.
+    factor : float
+        Factor to multiply the raw signals by (e.g. to convert from V to uV
     train_ratio : float
         Fraction of each recording used as the training (normal) portion.
     """
 
-    name = "ECG"
+    name = "Sleep"
 
     requirements = ["pip::pooch", "pandas"]
 
     parameters = {
-        "record_ids": [
-            ["MBA_ECG14046_data_1", "MBA_ECG14046_data_2"],
-        ],
-        "debug": [False],
-        "number": [-1],
-        "train_ratio": [0.1],
+        "window_size_samples": [3000],
+        "sub_ids": range(1, 83),
+        "mapping": {  # We merge stages 3 and 4 following AASM standards.
+            "Sleep stage W": 0,
+            "Sleep stage 1": 1,
+            "Sleep stage 2": 2,
+            "Sleep stage 3": 3,
+            "Sleep stage 4": 3,
+            "Sleep stage R": 4,
+        },
+        "train_ratio": [0.8],
+        "n_jobs": [1],
+        "debug": [True],
+        "high_cut_hz": [30],
+        "factor": [1e6],
     }
 
     def get_data(self):
 
         # Allow reuse of the download helper from benchmark_ad if present,
         # otherwise fall back to the data path directly.
-        try:
-            path = fetch_tsb_uad("ECG")
-        except ImportError:
-            path = get_data_path("ECG")
 
-        record_ids = self.record_ids
-        X_raw, y_raw = _load_records(path, record_ids, self.number)
+        preprocessors = [
+            Preprocessor(lambda data: np.multiply(data, self.factor)),
+            Preprocessor(
+                "filter", l_freq=None,
+                h_freq=self.high_cut_hz, n_jobs=self.n_jobs
+            ),
+        ]
 
-        if not X_raw:
-            raise ValueError("No valid ECG records found.")
-
-        X_train, X_test, y_test = [], [], []
-        for x, y in zip(X_raw, y_raw):
+        X_all, y_all = [], []
+        sub_ids = self.sub_ids[:2] if self.debug else self.sub_ids
+        for sub_id in sub_ids:
+            if sub_id in [39, 68, 69, 78, 79]:
+                continue
+            X_, y_ = _load_subject(
+                sub_id, preprocessors, self.mapping, self.window_size_samples
+            )
             if self.debug:
-                x = x[:5000]
-                y = y[:5000]
+                X_ = X_[:5000]
+                y_ = y_[:5000]
+            X_all.append(X_)
+            y_all.append(y_)
 
-            split = max(1, int(len(x) * self.train_ratio))
+        ids_train = np.random.Random(seed=42).choice(
+            len(self.sub_ids), size=int(len(self.sub_ids) * self.train_ratio),
+            replace=False
+        )
 
-            # Reshape to (T, C=1)
-            X_train.append(x[:split].reshape(-1, 1))
-            X_test.append(x[split:].reshape(-1, 1))
-            y_test.append(y[split:])
+        X_train = np.concatenate([X_all[i] for i in ids_train])
+        y_train = np.concatenate([y_all[i] for i in ids_train])
+        X_test = np.concatenate(
+            [X_all[i] for i in range(len(X_all)) if i not in ids_train]
+        )
+        y_test = np.concatenate(
+            [y_all[i] for i in range(len(y_all)) if i not in ids_train]
+        )
 
         return dict(
             X_train=X_train,
-            y_train=None,
+            y_train=y_train,
             X_test=X_test,
             y_test=y_test,
-            task="anomaly_detection",
-            metrics=["auc_roc", "auc_pr", "f1_pa"],
+            task="classification",
+            metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
+            n_classes=5,
         )
