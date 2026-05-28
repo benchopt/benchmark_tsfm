@@ -90,7 +90,7 @@ class Dataset(BaseDataset):
             x = []
             y = []
             for run in range(n_runs):
-                x += [sample[0] for sample in splitted[sub].datasets[run]]
+                x += [sample[0].T for sample in splitted[sub].datasets[run]]
                 y += [sample[1] for sample in splitted[sub].datasets[run]]
             X_all.append(np.array(x))
             y_all.append(np.array(y))
@@ -107,7 +107,6 @@ class Dataset(BaseDataset):
         y_test = np.concatenate(
             [y_all[i] for i in range(len(y_all)) if i not in ids_train]
         )
-
         return dict(
             X_train=X_train,
             y_train=y_train,

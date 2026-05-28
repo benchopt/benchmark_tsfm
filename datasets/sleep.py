@@ -51,7 +51,7 @@ def _load_subject(
         label = x[1]
         all_labels.append(label)
 
-        data = x[0]
+        data = x[0].T
         all_data.append(data)
     return all_data, all_labels
 
@@ -118,7 +118,7 @@ class Dataset(BaseDataset):
         ]
 
         X_all, y_all = [], []
-        sub_ids = self.sub_ids[:1] if self.debug else self.sub_ids
+        sub_ids = self.sub_ids[:2] if self.debug else self.sub_ids
         for sub_id in sub_ids:
             if sub_id in [39, 68, 69, 78, 79]:
                 continue
