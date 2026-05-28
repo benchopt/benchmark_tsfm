@@ -1,8 +1,9 @@
 """Composable encoder: ``UnpooledEncoder`` + ``Pooler`` -> 1-D feature vector.
 
-The :class:`UnpooledEncoder` ABC (in :mod:`.base`) exposes per-token
-embeddings of shape ``(T_tok, C, D)``.  This module adds:
+This module defines:
 
+- :class:`UnpooledEncoder` — ABC for frozen feature extractors that return
+  per-token embeddings of shape ``(T_tok, C, D)`` (no pooling);
 - :class:`BasePooler` and three concrete reducers (mean / max / last) over
   the time-token axis;
 - :class:`Encoder`, which composes an unpooled encoder with a pooler and
@@ -14,7 +15,30 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from .base import UnpooledEncoder
+
+class UnpooledEncoder(ABC):
+    """Frozen feature extractor returning *unpooled* embeddings.
+
+    Subclasses must implement ``encode``.  The returned per-token
+    embedding sequence is consumed by a :class:`BasePooler` before
+    reaching a linear head; this class deliberately does not pool.
+    """
+
+    @abstractmethod
+    def encode(self, x: np.ndarray) -> np.ndarray:
+        """Map one time series to its embedding sequence.
+
+        Parameters
+        ----------
+        x : np.ndarray, shape (T, C)
+            One time series (variable length allowed).
+
+        Returns
+        -------
+        np.ndarray, shape (T_tok, C, D)
+            Per-token, per-channel embeddings. ``T_tok`` may differ from
+            ``T`` (e.g. tokenizers may add EOS).
+        """
 
 
 class BasePooler(ABC):

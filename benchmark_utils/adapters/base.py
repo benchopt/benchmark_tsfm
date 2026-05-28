@@ -39,29 +39,3 @@ class BaseTSFMAdapter(ABC):
         np.ndarray
             Task-specific output — see module docstring.
         """
-
-
-class UnpooledEncoder(ABC):
-    """Frozen feature extractor returning *unpooled* embeddings.
-
-    Subclasses must implement ``encode``.  The returned per-token
-    embedding sequence is consumed by a ``Pooler`` (see
-    :mod:`benchmark_utils.adapters.encoder`) before reaching a linear
-    head; this class deliberately does not pool.
-    """
-
-    @abstractmethod
-    def encode(self, x: np.ndarray) -> np.ndarray:
-        """Map one time series to its embedding sequence.
-
-        Parameters
-        ----------
-        x : np.ndarray, shape (T, C)
-            One time series (variable length allowed).
-
-        Returns
-        -------
-        np.ndarray, shape (T_tok, C, D)
-            Per-token, per-channel embeddings. ``T_tok`` may differ from
-            ``T`` (e.g. tokenizers may add EOS).
-        """
