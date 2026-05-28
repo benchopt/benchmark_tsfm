@@ -29,7 +29,6 @@ from benchopt import BaseDataset
 def _load_subject(
     sub_id, preprocessors, mapping=None, window_size_samples=3000
 ):
-
     dataset = SleepPhysionet(subject_ids=[sub_id], crop_wake_mins=30)
 
     preprocess(dataset, preprocessors)
@@ -54,7 +53,7 @@ def _load_subject(
 
         data = x[0]
         all_data.append(data)
-    return np.concatenate(all_data), all_labels
+    return all_data, all_labels
 
 
 class Dataset(BaseDataset):
@@ -85,7 +84,7 @@ class Dataset(BaseDataset):
 
     name = "Sleep"
 
-    requirements = ["pip::pooch", "pandas"]
+    requirements = ["pip::pooch", "pandas", 'braindecode==1.5.1']
 
     parameters = {
         "window_size_samples": [3000],
@@ -119,7 +118,7 @@ class Dataset(BaseDataset):
         ]
 
         X_all, y_all = [], []
-        sub_ids = self.sub_ids[:2] if self.debug else self.sub_ids
+        sub_ids = self.sub_ids[:1] if self.debug else self.sub_ids
         for sub_id in sub_ids:
             if sub_id in [39, 68, 69, 78, 79]:
                 continue
@@ -132,8 +131,9 @@ class Dataset(BaseDataset):
             X_all.append(X_)
             y_all.append(y_)
 
-        ids_train = np.random.Random(seed=42).choice(
-            len(self.sub_ids), size=int(len(self.sub_ids) * self.train_ratio),
+        random_state = np.random.RandomState(seed=42)
+        ids_train = random_state.choice(
+            len(X_all), size=int(len(X_all) * self.train_ratio),
             replace=False
         )
 
@@ -145,7 +145,6 @@ class Dataset(BaseDataset):
         y_test = np.concatenate(
             [y_all[i] for i in range(len(y_all)) if i not in ids_train]
         )
-
         return dict(
             X_train=X_train,
             y_train=y_train,
