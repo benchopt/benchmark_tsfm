@@ -12,8 +12,10 @@ Usage
 """
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from .base import BaseTSFMAdapter
 
@@ -30,22 +32,60 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         Maximum iterations for the logistic regression solver.
     """
 
-    def __init__(self, encoder, task="classification", n_classes=None,
-                 max_iter=1000):
+    def __init__(
+        self,
+        encoder,
+        task="classification",
+        n_classes=None,
+        classifier="logistic_regression",
+        penalty="l2",
+        max_iter=1000,
+        n_estimators=100,
+    ):
         self.encoder = encoder
         self.task = task
         self.n_classes = n_classes
+        self.classifier = classifier
+        self.penalty = penalty
         self.max_iter = max_iter
+        self.n_estimators = n_estimators
         self._label_enc = LabelEncoder()
 
     def fit(self, X_train, y_train, **kwargs):
-        embeddings = np.stack([self.encoder.encode(x) for x in X_train])
+        embeddings = self.encoder.encode(X_train)
 
         if self.task == "classification":
             y_enc = self._label_enc.fit_transform(y_train)
-            self._head = LogisticRegression(
-                max_iter=self.max_iter, multi_class="auto"
-            )
+
+            # Define classifier
+            match self.classifier.lower():
+                case "logistic_regression":
+                    self._head = make_pipeline(
+                        StandardScaler(),
+                        LogisticRegression(
+                            penalty=self.penalty,
+                            max_iter=self.max_iter,
+                        ),
+                    )
+                case "ridge_regression":
+                    self._head = make_pipeline(
+                        StandardScaler(),
+                        RidgeClassifier(
+                            max_iter=self.max_iter,
+                            random_state=42,
+                        ),
+                    )
+                case "random_forest":
+                    self._head = RandomForestClassifier(
+                        n_estimators=self.n_estimators,
+                        n_jobs=-1,
+                        random_state=42,
+                        verbose=0,
+                    )
+                case "_":
+                    raise ValueError(
+                        f"Unknown classifier '{self.classifier}'. Choose between 'logistic_regression', 'ridge_regression', and 'random_forest'."
+                    )
             self._head.fit(embeddings, y_enc)
 
         elif self.task == "anomaly_detection":
@@ -57,17 +97,17 @@ class LinearProbeAdapter(BaseTSFMAdapter):
 
         return self
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        emb = self.encoder.encode(x)
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        emb = self.encoder.encode(X)
 
         if self.task == "classification":
-            label_enc = self._head.predict([emb])[0]
-            return int(self._label_enc.inverse_transform([label_enc])[0])
+            label_enc = self._head.predict(emb)
+            return self._label_enc.inverse_transform(label_enc)
 
         elif self.task == "anomaly_detection":
             # Score: L2 distance from the training mean embedding,
             # broadcast to every timestep (uniform window score).
             score = float(np.linalg.norm(emb - self._train_mean))
-            return np.full(x.shape[0], score, dtype=np.float32)
+            return np.full(X.shape[0], score, dtype=np.float32)
 
         raise ValueError(f"Unknown task: {self.task}")

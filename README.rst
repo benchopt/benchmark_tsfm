@@ -9,6 +9,7 @@ The goal is to provide a benchmark that evaluate the models on:
 - Classification
 - Forecasting
 - Anomaly Detection
+- Event Detection
 
 With diverse modalities (univariate, multivariate, EEG, etc.) and varying sequence lengths.
 

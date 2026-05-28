@@ -13,7 +13,7 @@ All datasets must return (via ``get_data``):
     X_test  : List[np.ndarray]            test data (shape depends on task)
     y_test  : array-like                  task-specific (see below)
     task    : str  one of {"forecasting", "classification",
-                            "anomaly_detection"}
+                            "anomaly_detection", "event_detection"}
     metrics : List[str]  names from benchmark_utils.metrics.ALL_METRICS
 
 Task-specific shapes
@@ -30,11 +30,14 @@ forecasting        X_test         List[(T_i, C)]  full series — adapter uses
                                                   from the objective once
                                                   and wires them into the
                                                   adapter
-classification     y_train        (N,) int
-                   y_test         (M,) int
-                   extra          n_classes (int)
-anomaly_detection  y_train        None
-                   y_test         List[(T_j,)] int  point-level labels
+classification     y_train  (N,) int
+                   y_test   (M,) int
+                   extra    n_classes (int)
+anomaly_detection  y_train  None
+                   y_test   List[(T_j,)] int  point-level binary labels
+event_detection    y_train  List[(N_i, 2+K)] float  object-detection boxes
+                   y_test   List[(N_j, 2+K)] float  object-detection boxes
+                   extra    n_classes (int)
 
 Solver contract
 ---------------
@@ -106,6 +109,8 @@ class Objective(BaseObjective):
             return self._eval_classification(model)
         elif self.task == "anomaly_detection":
             return self._eval_anomaly_detection(model)
+        elif self.task == "event_detection":
+            return self._eval_event_detection(model)
         else:
             raise ValueError(f"Unknown task: {self.task!r}")
 
@@ -154,6 +159,17 @@ class Objective(BaseObjective):
             result[name] = ALL_METRICS[name](y_true, y_pred)
         return result
 
+    # --- event detection -----------------------------------------------
+
+    def _eval_event_detection(self, model):
+        # model.predict returns (N, 2+K) float array per series
+        preds = [np.asarray(model.predict(x)) for x in self.X_test]
+
+        result = {}
+        for name in self.metrics:
+            result[name] = ALL_METRICS[name](self.y_test, preds)
+        return result
+
     # --- anomaly detection ---------------------------------------------
 
     def _eval_anomaly_detection(self, model):
@@ -191,6 +207,8 @@ class Objective(BaseObjective):
                     return np.zeros(len(x), dtype=np.int64)
                 elif self._task == "anomaly_detection":
                     return np.zeros(x.shape[0], dtype=np.float32)
+                elif self._task == "event_detection":
+                    return np.zeros((0, 2 + self._meta.get("n_classes", 1)))
 
         return {"model": _ConstantAdapter(
             self.task, self.meta.get("prediction_length", 1)
