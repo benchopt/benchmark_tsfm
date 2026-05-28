@@ -1,9 +1,5 @@
 """Chronos solver for the TSFM benchmark.
 
-Uses the Uses the official ``mantis-tsfm`` API to load a pretrained Mantis checkpoint,
-extract embeddings with ``MantisTrainer.transform``, and train a Random Forest
-classifier on top.
-
 Supports:
   - forecasting        : zero-shot via ChronosPipeline
   - anomaly_detection  : forecast-residual (zero-shot)
