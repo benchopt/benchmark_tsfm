@@ -87,20 +87,9 @@ class Dataset(BaseDataset):
     requirements = ["pip::pooch", "pandas", 'braindecode==1.5.1']
 
     parameters = {
-        "window_size_samples": [3000],
-        "mapping": {  # We merge stages 3 and 4 following AASM standards.
-            "Sleep stage W": 0,
-            "Sleep stage 1": 1,
-            "Sleep stage 2": 2,
-            "Sleep stage 3": 3,
-            "Sleep stage 4": 3,
-            "Sleep stage R": 4,
-        },
+        "seed": [42],
         "train_ratio": [0.8],
-        "n_jobs": [1],
         "debug": [True],
-        "high_cut_hz": [30],
-        "factor": [1e6],
     }
 
     def get_data(self):
@@ -108,21 +97,34 @@ class Dataset(BaseDataset):
         # Allow reuse of the download helper from benchmark_ad if present,
         # otherwise fall back to the data path directly.
         sub_ids = range(1, 83)
+        window_size_samples = 3000
+        mapping = {  # We merge stages 3 and 4 following AASM standards.
+            "Sleep stage W": 0,
+            "Sleep stage 1": 1,
+            "Sleep stage 2": 2,
+            "Sleep stage 3": 3,
+            "Sleep stage 4": 3,
+            "Sleep stage R": 4,
+        }
+        n_jobs = 1
+        high_cut_hz = 40.0
+        factor = 1e6  # Factor to convert from V to uV
+
         preprocessors = [
-            Preprocessor(lambda data: np.multiply(data, self.factor)),
+            Preprocessor(lambda data: np.multiply(data, factor)),
             Preprocessor(
                 "filter", l_freq=None,
-                h_freq=self.high_cut_hz, n_jobs=self.n_jobs
+                h_freq=high_cut_hz, n_jobs=n_jobs
             ),
         ]
 
         X_all, y_all = [], []
-        sub_ids = sub_ids[:2] if self.debug else self.sub_ids
+        sub_ids = sub_ids[:2] if self.debug else sub_ids
         for sub_id in sub_ids:
             if sub_id in [39, 68, 69, 78, 79]:
                 continue
             X_, y_ = _load_subject(
-                sub_id, preprocessors, self.mapping, self.window_size_samples
+                sub_id, preprocessors, mapping, window_size_samples
             )
             if self.debug:
                 X_ = X_[:5000]
@@ -130,7 +132,7 @@ class Dataset(BaseDataset):
             X_all.append(X_)
             y_all.append(y_)
 
-        random_state = np.random.RandomState(seed=42)
+        random_state = np.random.RandomState(seed=self.seed)
         ids_train = random_state.choice(
             len(X_all), size=int(len(X_all) * self.train_ratio),
             replace=False

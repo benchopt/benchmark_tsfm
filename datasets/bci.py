@@ -25,6 +25,7 @@ class Dataset(BaseDataset):
     parameters = {
         'train_ratio': [0.8],
         'debug': [True],
+        'seed': [42],
     }
 
     def get_data(self):
@@ -94,7 +95,7 @@ class Dataset(BaseDataset):
                 y += [sample[1] for sample in splitted[sub].datasets[run]]
             X_all.append(np.array(x))
             y_all.append(np.array(y))
-        random_state = np.random.RandomState(seed=42)
+        random_state = np.random.RandomState(seed=self.seed)
         ids_train = random_state.choice(
             len(X_all), size=int(len(X_all) * self.train_ratio),
             replace=False
