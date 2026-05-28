@@ -15,15 +15,14 @@ Adding a new task
 2. In ``run``, instantiate the appropriate adapter from
    ``benchmark_utils.adapters`` (or implement a new one there).
 """
-from benchopt import BaseSolver
 
-import torch
 import numpy as np
-from chronos import Chronos2Pipeline
+import torch
+from benchopt import BaseSolver
+from chronos import Chronos2Pipeline, ChronosPipeline
 
-
+from benchmark_utils.adapters import UnpooledEncoder
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
-
 
 SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 
@@ -31,6 +30,7 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 # ---------------------------------------------------------------------------
 # Thin wrapper exposing the predict() interface expected by the objective
 # ---------------------------------------------------------------------------
+
 
 class _ChronosForecaster:
     """Wraps ChronosPipeline to expose predict(x (T, C)) -> (H, C)."""
@@ -58,9 +58,118 @@ class _ChronosForecaster:
         return out[:, self._median_idx, :].T  # (H, C)
 
 
+def _to_context_tensor(x: np.ndarray):
+    """Convert ``(T,)`` or ``(T, C)`` array to ``(C, T)`` float32 tensor.
+
+    Channels become the batch dim so a single Chronos forward pass covers
+    all of them — Chronos is univariate, so channels are independent.
+    """
+
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 1:
+        x = x[:, None]
+    return torch.from_numpy(x.T)
+
+
+class _ChronosEmbedEncoder(UnpooledEncoder):
+    """Default path — uses ``ChronosPipeline.embed``.
+
+    Returns hidden states *after* ``encoder.final_layer_norm``.
+    """
+
+    def __init__(self, pipeline: ChronosPipeline):
+        self.pipeline = pipeline
+
+    def encode(self, x: np.ndarray) -> np.ndarray:
+        context = _to_context_tensor(x)  # (C, T)
+        with torch.no_grad():
+            embeddings, _ = self.pipeline.embed(context)  # (C, T_tok, D)
+        # (C, T_tok, D) -> (T_tok, C, D)
+        return embeddings.transpose(0, 1).float().cpu().numpy()
+
+
+class _ChronosHookEncoder(UnpooledEncoder):
+    """Layer-specific path — forward hook on ``encoder.block[layer]``.
+
+    Returns the *pre-norm* hidden state at the chosen block. Negative
+    indices are allowed (``-1`` = last block).
+    """
+
+    def __init__(self, pipeline: ChronosPipeline, layer: int):
+        self.pipeline = pipeline
+        n_blocks = len(pipeline.model.model.encoder.block)
+        if not -n_blocks <= layer < n_blocks:
+            raise IndexError(
+                f"layer {layer} out of range for {n_blocks} encoder blocks"
+            )
+        self._block_idx = layer % n_blocks
+
+    def encode(self, x: np.ndarray) -> np.ndarray:
+        context = _to_context_tensor(x)  # (C, T)
+        token_ids, attn_mask, _ = (
+            self.pipeline.tokenizer.context_input_transform(context)
+        )
+        device = self.pipeline.model.device
+        token_ids = token_ids.to(device)
+        attn_mask = attn_mask.to(device)
+
+        encoder = self.pipeline.model.model.encoder
+        captured = {}
+
+        def _hook(_module, _inputs, output):
+            # Hook to capture the embeddings while performing a forward pass
+            # T5Block returns a tuple; first element is the hidden state.
+            hidden = output[0] if isinstance(output, tuple) else output
+            captured["h"] = hidden.detach()
+
+        handle = encoder.block[self._block_idx].register_forward_hook(_hook)
+        try:
+            with torch.no_grad():
+                encoder(input_ids=token_ids, attention_mask=attn_mask)
+        finally:
+            handle.remove()
+
+        # (C, T_tok, D) -> (T_tok, C, D)
+        return captured["h"].transpose(0, 1).float().cpu().numpy()
+
+
+def ChronosEncoder(
+    pipeline: ChronosPipeline, layer: int | None = None
+) -> UnpooledEncoder:
+    """Build a Chronos feature extractor.
+
+    Parameters
+    ----------
+    pipeline : ChronosPipeline
+        A loaded Chronos pipeline.
+    layer : int, optional
+        Encoder block index to read hidden states from. ``None`` (default)
+        uses :meth:`ChronosPipeline.embed`, which returns post-final-norm
+        states from the full encoder. An integer ``layer`` registers a
+        forward hook on ``encoder.block[layer]`` and returns the pre-norm
+        hidden state there. Negative indexing supported.
+
+    Returns
+    -------
+    UnpooledEncoder
+        Object exposing ``encode(x: np.ndarray (T, C)) -> np.ndarray
+        (T_tok, C, D)``. Embeddings are *not* pooled.
+
+    Notes
+    -----
+    ``ChronosEncoder(pipeline)`` and ``ChronosEncoder(pipeline, layer=-1)``
+    differ only by ``encoder.final_layer_norm`` — they will be close but
+    not identical.
+    """
+    if layer is None:
+        return _ChronosEmbedEncoder(pipeline)
+    return _ChronosHookEncoder(pipeline, layer)
+
+
 # ---------------------------------------------------------------------------
 # Solver
 # ---------------------------------------------------------------------------
+
 
 class Solver(BaseSolver):
     """Chronos zero-shot solver.
