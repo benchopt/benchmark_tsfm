@@ -53,12 +53,10 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
         if not cutoffs:
             return scores
 
+        from benchmark_utils.inputs import ForecastInput
         try:
             preds = self.forecaster.predict(
-                [x],
-                cutoff_indexes=[cutoffs],
-                covariates={"static_covars": [], "hist_covars": [], "future_covars": []},
-                prediction_length=self.prediction_length,
+                ForecastInput(x=[x], cutoff_indexes=[cutoffs])
             )[0]  # (n_cutoffs, H, C)
         except Exception:
             return scores

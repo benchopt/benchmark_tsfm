@@ -34,6 +34,7 @@ import numpy as np
 from benchopt import BaseDataset
 
 from aeon.datasets import load_forecasting
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.windowing import make_forecasting_splits
 
 
@@ -138,11 +139,7 @@ class Dataset(BaseDataset):
             X_test=X_test,
             y_test=y_test,
             cutoff_indexes=cutoff_indexes,
-            covariates={
-                "static_covars": [],
-                "hist_covars": [],
-                "future_covars": [],
-            },
+            covariates=Covariates(),
             task="forecasting",
             metrics=["mae", "mse", "mase", "smape"],
             prediction_length=pred_len,

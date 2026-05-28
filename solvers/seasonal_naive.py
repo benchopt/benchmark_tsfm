@@ -14,6 +14,7 @@ import numpy as np
 from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
+from benchmark_utils.inputs import ForecastInput
 
 
 SUPPORTED_TASKS = {"forecasting"}
@@ -22,24 +23,24 @@ SUPPORTED_TASKS = {"forecasting"}
 class _SeasonalNaiveForecaster(BaseTSFMAdapter):
     """Repeat the last ``season_length`` observations to fill the horizon."""
 
-    def __init__(self, season_length: int):
+    def __init__(self, prediction_length: int, season_length: int):
         if season_length < 1:
             raise ValueError(f"season_length must be >= 1, got {season_length}")
+        self.prediction_length = prediction_length
         self.season_length = season_length
 
-    def predict(self, x, cutoff_indexes, covariates, prediction_length):
-        del covariates
+    def predict(self, x: ForecastInput):
         results = []
-        for series, cutoffs in zip(x, cutoff_indexes):
+        for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            preds = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
+            preds = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 season = min(self.season_length, hist.shape[0])
                 pattern = hist[-season:]
-                reps = int(np.ceil(prediction_length / season))
-                preds[k] = np.tile(pattern, (reps, 1))[:prediction_length]
+                reps = int(np.ceil(self.prediction_length / season))
+                preds[k] = np.tile(pattern, (reps, 1))[:self.prediction_length]
             results.append(preds)
         return results
 
@@ -78,7 +79,10 @@ class Solver(BaseSolver):
         self.meta = meta
 
     def run(self, _):
-        self._adapter = _SeasonalNaiveForecaster(self.season_length)
+        self._adapter = _SeasonalNaiveForecaster(
+            prediction_length=self.meta.get("prediction_length", 1),
+            season_length=self.season_length,
+        )
 
     def get_result(self):
         return {"model": self._adapter}

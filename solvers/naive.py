@@ -12,6 +12,7 @@ import numpy as np
 from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
+from benchmark_utils.inputs import ForecastInput
 
 
 # ---------------------------------------------------------------------------
@@ -21,22 +22,22 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 class _NaiveForecaster(BaseTSFMAdapter):
     """Repeat the last ``seasonality`` values to fill the horizon."""
 
-    def __init__(self, seasonality=1):
+    def __init__(self, prediction_length, seasonality=1):
+        self.prediction_length = prediction_length
         self.seasonality = seasonality
 
-    def predict(self, x, cutoff_indexes, covariates, prediction_length):
-        del covariates
+    def predict(self, x: ForecastInput):
         results = []
-        for series, cutoffs in zip(x, cutoff_indexes):
+        for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            preds = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
+            preds = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 season = min(self.seasonality, hist.shape[0])
                 pattern = hist[-season:]
-                reps = int(np.ceil(prediction_length / season))
-                preds[k] = np.tile(pattern, (reps, 1))[:prediction_length]
+                reps = int(np.ceil(self.prediction_length / season))
+                preds[k] = np.tile(pattern, (reps, 1))[:self.prediction_length]
             results.append(preds)
         return results
 
@@ -100,7 +101,10 @@ class Solver(BaseSolver):
 
     def run(self, _):
         if self.task == "forecasting":
-            self._adapter = _NaiveForecaster(self.seasonality)
+            self._adapter = _NaiveForecaster(
+                prediction_length=self.meta.get("prediction_length", 1),
+                seasonality=self.seasonality,
+            )
 
         elif self.task == "classification":
             self._adapter = _MajorityClassifier()

@@ -20,6 +20,7 @@ import numpy as np
 from benchopt import BaseSolver
 
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.inputs import ForecastInput
 
 
 SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
@@ -32,18 +33,18 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 class _ChronosForecaster:
     """Wraps ChronosPipeline with the batched series+cutoffs predict API."""
 
-    def __init__(self, pipeline):
+    def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
+        self.prediction_length = prediction_length
 
-    def predict(self, x, cutoff_indexes, covariates, prediction_length):
-        del covariates
+    def predict(self, x: ForecastInput):
         import torch
 
         results = []
-        for series, cutoffs in zip(x, cutoff_indexes):
+        for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series, dtype=np.float32)
             C = series.shape[1] if series.ndim == 2 else 1
-            out = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
+            out = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 if hist.ndim == 1:
@@ -53,7 +54,7 @@ class _ChronosForecaster:
                     context = torch.from_numpy(hist[:, c]).unsqueeze(0)
                     forecast = self.pipeline.predict(
                         context,
-                        prediction_length=prediction_length,
+                        prediction_length=self.prediction_length,
                     )
                     f = forecast[0]
                     if f.ndim == 2:
@@ -117,14 +118,18 @@ class Solver(BaseSolver):
             self._loaded_model = model_id
 
     def run(self, _):
-        forecaster = _ChronosForecaster(self._pipeline)
+        pred_len = self.meta.get("prediction_length", 1)
+        forecaster = _ChronosForecaster(self._pipeline, pred_len)
 
         if self.task == "forecasting":
             self._adapter = forecaster
 
         elif self.task == "anomaly_detection":
+            # AD uses one-step-ahead forecasts; rebuild the forecaster
+            # with prediction_length=1 to match.
             self._adapter = ForecastResidualAdapter(
-                forecaster, prediction_length=1
+                _ChronosForecaster(self._pipeline, prediction_length=1),
+                prediction_length=1,
             )
 
     def get_result(self):

@@ -22,9 +22,14 @@ forecasting        X_test         List[(T_i, C)]  full series — adapter uses
                                                   ``x[:cutoff]`` as history
                    cutoff_indexes List[List[int]] jagged per-series cutoffs
                    y_test         List[(n_cutoffs, H, C)]
-                   covariates     dict           {static_covars, hist_covars,
-                                                  future_covars}
-                   extra          prediction_length (int), freq (str)
+                   covariates     Covariates      dataclass with
+                                                  static / hist / future
+                                                  covariate lists
+                   extra          prediction_length (int), freq (str) —
+                                                  the solver reads these
+                                                  from the objective once
+                                                  and wires them into the
+                                                  adapter
 classification     y_train        (N,) int
                    y_test         (M,) int
                    extra          n_classes (int)
@@ -66,16 +71,14 @@ class Objective(BaseObjective):
     def set_data(self, X_train, y_train, X_test, y_test,
                  task, metrics, cutoff_indexes=None, covariates=None,
                  **meta):
+        from benchmark_utils.covariates import Covariates
+
         self.X_train = X_train
         self.y_train = y_train
         self.X_test = X_test
         self.y_test = y_test
         self.cutoff_indexes = cutoff_indexes
-        self.covariates = covariates or {
-            "static_covars": [],
-            "hist_covars": [],
-            "future_covars": [],
-        }
+        self.covariates = covariates if covariates is not None else Covariates()
         self.task = task
         self.metrics = metrics
         self.meta = meta  # freq, prediction_length, n_classes, …
@@ -109,12 +112,14 @@ class Objective(BaseObjective):
     # --- forecasting ---------------------------------------------------
 
     def _eval_forecasting(self, model):
-        prediction_length = self.meta.get("prediction_length", 1)
+        from benchmark_utils.inputs import ForecastInput
+
         preds_per_series = model.predict(
-            self.X_test,
-            cutoff_indexes=self.cutoff_indexes,
-            covariates=self.covariates,
-            prediction_length=prediction_length,
+            ForecastInput(
+                x=self.X_test,
+                cutoff_indexes=self.cutoff_indexes,
+                covariates=self.covariates,
+            )
         )
 
         preds, targets = [], []
@@ -169,27 +174,23 @@ class Objective(BaseObjective):
         from benchmark_utils.adapters.base import BaseTSFMAdapter
 
         class _ConstantAdapter(BaseTSFMAdapter):
-            def __init__(self, task, meta):
+            def __init__(self, task, prediction_length):
                 self._task = task
-                self._meta = meta
+                self._prediction_length = prediction_length
 
-            def predict(self, *args, **kwargs):
+            def predict(self, x):
                 if self._task == "forecasting":
-                    x = args[0]
-                    cutoff_indexes = kwargs.get(
-                        "cutoff_indexes", args[1] if len(args) > 1 else None
-                    )
-                    H = kwargs.get("prediction_length", self._meta.get("prediction_length", 1))
+                    H = self._prediction_length
                     preds = []
-                    for series, cutoffs in zip(x, cutoff_indexes or []):
+                    for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
                         preds.append(np.zeros((len(cutoffs), H, C), dtype=np.float32))
                     return preds
                 elif self._task == "classification":
-                    x = args[0]
                     return np.zeros(len(x), dtype=np.int64)
                 elif self._task == "anomaly_detection":
-                    x = args[0]
                     return np.zeros(x.shape[0], dtype=np.float32)
 
-        return {"model": _ConstantAdapter(self.task, self.meta)}
+        return {"model": _ConstantAdapter(
+            self.task, self.meta.get("prediction_length", 1)
+        )}

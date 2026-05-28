@@ -1,24 +1,19 @@
 """Base interface that all task adapters must implement.
 
 A *fitted* adapter is what solvers return via ``get_result()``.
-The objective calls ``adapter.predict(...)`` with task-appropriate inputs.
+The objective calls ``adapter.predict(x)`` with task-appropriate inputs.
 
 Predict signature by task
 --------------------------
 forecasting:
 
-    predict(
-        x: list[np.ndarray (T_i, C)],
-        cutoff_indexes: list[list[int]],
-        covariates: dict,
-        prediction_length: int,
-    ) -> list[np.ndarray (n_cutoffs_i, prediction_length, C)]
+    predict(x: ForecastInput) -> list[np.ndarray (n_cutoffs_i, prediction_length, C)]
 
-  ``cutoff_indexes[i][k]`` is the timestep index in ``x[i]`` at which
-  the k-th forecast for series ``i`` starts. The model must use only
-  ``x[i][:cutoff]`` as history. The ``covariates`` dict has shape
-  ``{"static_covars": list, "hist_covars": list, "future_covars": list}``;
-  the keys are always present (empty lists when unused).
+  :class:`~benchmark_utils.inputs.ForecastInput` bundles the per-series
+  history list, the jagged per-series cutoff indexes, and a
+  :class:`~benchmark_utils.covariates.Covariates` dataclass.
+  ``prediction_length`` is dataset-level — the solver reads it from the
+  objective and wires it into the adapter at construction time.
 
 classification:
 
@@ -30,7 +25,14 @@ anomaly detection:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Union
+
+import numpy as np
+
+from benchmark_utils.inputs import ForecastInput
+
+
+PredictInput = Union[ForecastInput, np.ndarray]
 
 
 class BaseTSFMAdapter(ABC):
@@ -45,5 +47,5 @@ class BaseTSFMAdapter(ABC):
         return self
 
     @abstractmethod
-    def predict(self, *args, **kwargs) -> Any:
+    def predict(self, x: PredictInput) -> Any:
         """Task-specific inference. See module docstring for per-task signatures."""

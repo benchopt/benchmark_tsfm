@@ -32,6 +32,7 @@ import pandas as pd
 from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
+from benchmark_utils.inputs import ForecastInput
 
 
 SUPPORTED_TASKS = {"forecasting"}
@@ -79,6 +80,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         self,
         client,
         model,
+        prediction_length: int,
         freq: str,
         context: Optional[int],
         quantiles: Optional[list[float]],
@@ -89,6 +91,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
     ):
         self.client = client
         self.model = model  # TFCModels enum
+        self.prediction_length = prediction_length
         self.freq = _to_api_freq(freq)
         if quantiles is None:
             quantiles = [0.5]
@@ -101,19 +104,19 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         self.country_isocode = country_isocode
         self.batch_size = batch_size
 
-    def predict(self, x, cutoff_indexes, covariates, prediction_length):
-        # TODO: thread ``covariates`` (static/hist/future) through to the SDK
-        # once the benchmark datasets expose them. For now the dict is
-        # ignored — Monash datasets carry no covariates.
-        del covariates
+    def predict(self, x: ForecastInput):
+        # TODO: thread ``x.covariates`` (static/hist/future) through to the SDK
+        # once the benchmark datasets populate them. Monash currently
+        # carries none, so the dataclass arrives with empty sequences.
+        series_list, cutoff_indexes = x.x, x.cutoff_indexes
         pd_freq = _to_pandas_freq(self.freq)
 
-        offsets = _shared_offsets_from_end(x, cutoff_indexes)
+        offsets = _shared_offsets_from_end(series_list, cutoff_indexes)
         if getattr(self.model, "supports_batching", False) and offsets is not None:
-            return self._predict_batched(x, cutoff_indexes, prediction_length, pd_freq, offsets)
-        return self._predict_per_series(x, cutoff_indexes, prediction_length, pd_freq)
+            return self._predict_batched(series_list, cutoff_indexes, pd_freq, offsets)
+        return self._predict_per_series(series_list, cutoff_indexes, pd_freq)
 
-    def _predict_per_series(self, x, cutoff_indexes, prediction_length, pd_freq):
+    def _predict_per_series(self, x, cutoff_indexes, pd_freq):
         results = []
         for series_idx, (series, cutoffs) in enumerate(zip(x, cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
@@ -136,7 +139,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             forecast_df = self.client.cross_validate(
                 train_df,
                 model=self.model,
-                horizon=prediction_length,
+                horizon=self.prediction_length,
                 freq=self.freq,
                 fcds=fcds,
                 quantiles=self.quantiles,
@@ -148,12 +151,12 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             )
 
             preds = self._gather_series_preds(
-                forecast_df, series_idx, C, cutoffs, fcds, prediction_length
+                forecast_df, series_idx, C, cutoffs, fcds
             )
             results.append(preds)
         return results
 
-    def _predict_batched(self, x, cutoff_indexes, prediction_length, pd_freq, offsets):
+    def _predict_batched(self, x, cutoff_indexes, pd_freq, offsets):
         """One ``cross_validate`` call covering every series in ``x``.
 
         Series are aligned to share an end date so all cutoffs collapse to
@@ -189,7 +192,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         forecast_df = self.client.cross_validate(
             train_df,
             model=self.model,
-            horizon=prediction_length,
+            horizon=self.prediction_length,
             freq=self.freq,
             fcds=fcds,
             quantiles=self.quantiles,
@@ -204,12 +207,12 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         for series_idx, C, index, cutoffs in per_series_meta:
             series_fcds = [pd.Timestamp(index[cutoff]) for cutoff in cutoffs]
             preds = self._gather_series_preds(
-                forecast_df, series_idx, C, cutoffs, series_fcds, prediction_length
+                forecast_df, series_idx, C, cutoffs, series_fcds
             )
             results.append(preds)
         return results
 
-    def _gather_series_preds(self, forecast_df, series_idx, C, cutoffs, fcds, prediction_length):
+    def _gather_series_preds(self, forecast_df, series_idx, C, cutoffs, fcds):
         value_col = f"{self.model}_q0.5"
         if value_col not in forecast_df.columns:
             value_col = str(self.model)
@@ -218,11 +221,11 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
             )
 
-        preds = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
+        preds = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
         for c in range(C):
             channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
             for k, fcd in enumerate(fcds):
-                window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(prediction_length)
+                window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(self.prediction_length)
                 preds[k, :, c] = window[value_col].to_numpy(dtype=np.float32)
         return preds
 
@@ -293,6 +296,7 @@ class Solver(BaseSolver):
         self._adapter = _TFCAPIForecaster(
             client=self._client,
             model=self._model_enum,
+            prediction_length=self.meta.get("prediction_length", 1),
             freq=self.meta.get("freq", "D"),
             context=self.context,
             quantiles=None,
