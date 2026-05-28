@@ -101,6 +101,6 @@ class Encoder:
 
         ``(T, C) -> (C * D,)``.
         """
-        embeddings = self.base_encoder.encode(x)   # (T_tok, C, D)
-        pooled = self.pooler.pool(embeddings)      # (C, D)
-        return pooled.reshape(-1)                  # (C * D,)
+        embeddings = self.base_encoder.encode(x)  # (T_tok, C, D)
+        pooled = self.pooler.pool(embeddings)  # (C, D)
+        return pooled.reshape(-1)  # (C * D,)
