@@ -20,6 +20,7 @@ from pathlib import Path
 
 from benchopt import BaseDataset
 from benchopt.config import get_data_path
+from benchmark_utils.download import fetch_tsb_uad
 
 
 def _load_records(db_path, record_ids, number):
@@ -72,7 +73,6 @@ class Dataset(BaseDataset):
     }
 
     def get_data(self):
-        from benchmark_utils.download import fetch_tsb_uad
 
         # Allow reuse of the download helper from benchmark_ad if present,
         # otherwise fall back to the data path directly.

@@ -17,6 +17,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import FunctionTransformer
 
 from mantis.trainer import MantisTrainer
+from mantis.architecture import MantisV1, MantisV2
 
 SUPPORTED_TASKS = {"classification"}
 
@@ -70,11 +71,9 @@ class Solver(BaseSolver):
         )
         if should_reload:
             try:
-                if "MantisV2" in self.checkpoint:
-                    from mantis.architecture import MantisV2 as MantisBackbone
-                else:
-                    from mantis.architecture import MantisV1 as MantisBackbone
-
+                MantisBackbone = (
+                    MantisV2 if "MantisV2" in self.checkpoint else MantisV1
+                )
                 network = MantisBackbone(device=device)
                 network = network.from_pretrained(self.checkpoint)
 

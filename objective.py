@@ -100,7 +100,7 @@ class Objective(BaseObjective):
     def _eval_forecasting(self, model):
         preds, targets = [], []
         for x, y in zip(self.X_test, self.y_test):
-            pred = np.asarray(model.predict(x))   # (H, C)
+            pred = np.asarray(model.predict(x))  # (H, C)
             preds.append(pred)
             targets.append(np.asarray(y))
 

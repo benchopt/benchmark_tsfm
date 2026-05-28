@@ -18,9 +18,12 @@ Adding a new task
 References:
     https://github.com/amazon-science/chronos-forecasting
 """
-
-import numpy as np
 from benchopt import BaseSolver
+
+import torch
+import numpy as np
+from chronos import Chronos2Pipeline
+
 
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 
@@ -39,30 +42,23 @@ class _ChronosForecaster:
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
+        # Chronos-2 returns quantile forecasts; locate the median.
+        self._median_idx = list(pipeline.quantiles).index(0.5)
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        import torch
+        # Chronos expects (batch, C, time) tensors.
+        x = np.asarray(x, dtype=np.float32).T[None]  # (N, C, T)
 
-        x = np.asarray(x, dtype=np.float32)  # (T, C)
-        C = x.shape[1]
-
-        # Chronos expects (batch, time) tensors — one channel at a time,
-        # then stack.
-        preds = []
-        for c in range(C):
-            context = torch.from_numpy(x[:, c]).unsqueeze(0)  # (1, T)
-            forecast = self.pipeline.predict(
-                context,
-                prediction_length=self.prediction_length,
-            )
-            # forecast: (1, n_samples, H) for sample-based pipelines,
-            # or (1, H) for point pipelines — take median.
-            f = forecast[0]
-            if f.ndim == 2:  # (n_samples, H) → median
-                f = f.median(dim=0).values
-            preds.append(f.numpy())  # (H,)
-
-        return np.stack(preds, axis=-1).astype(np.float32)  # (H, C)
+        context = torch.from_numpy(x)
+        forecast = self.pipeline.predict(
+            context,
+            prediction_length=self.prediction_length,
+        )
+        # forecast is a list of length batch; each entry has shape
+        # (n_variates, n_quantiles, H). Take the median quantile and cast
+        # to float32 (bfloat16 tensors can't be converted to numpy).
+        out = forecast[0].float().cpu().numpy()  # (C, Q, H)
+        return out[:, self._median_idx, :].T  # (H, C)
 
 
 # ---------------------------------------------------------------------------
@@ -102,20 +98,22 @@ class Solver(BaseSolver):
     # ------------------------------------------------------------------
 
     def set_objective(self, X_train, y_train, task, **meta):
-        import torch
-        from chronos import ChronosPipeline
 
         self.task = task
         self.X_train = X_train
         self.meta = meta
 
         # Load model once; reuse across consecutive dataset configs.
-        model_id = f"amazon/chronos-t5-{self.model_size}"
+        # bfloat16 is fine on GPU but poorly supported on CPU — fall back
+        # to float32 there so inference doesn't crash or stall.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        model_id = f"autogluon/chronos-2-{self.model_size}"
         if not hasattr(self, "_pipeline") or self._loaded_model != model_id:
-            self._pipeline = ChronosPipeline.from_pretrained(
+            self._pipeline = Chronos2Pipeline.from_pretrained(
                 model_id,
-                device_map="auto",
-                torch_dtype=torch.bfloat16,
+                device_map=device,
+                dtype=dtype,
             )
             self._loaded_model = model_id
 
