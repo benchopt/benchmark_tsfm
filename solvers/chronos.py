@@ -1,5 +1,9 @@
 """Chronos solver for the TSFM benchmark.
 
+Uses the Uses the official ``mantis-tsfm`` API to load a pretrained Mantis checkpoint,
+extract embeddings with ``MantisTrainer.transform``, and train a Random Forest
+classifier on top.
+
 Supports:
   - forecasting        : zero-shot via ChronosPipeline
   - anomaly_detection  : forecast-residual (zero-shot)
@@ -14,6 +18,9 @@ Adding a new task
 1. Add the task name to ``SUPPORTED_TASKS``.
 2. In ``run``, instantiate the appropriate adapter from
    ``benchmark_utils.adapters`` (or implement a new one there).
+
+References:
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
@@ -28,6 +35,7 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 # ---------------------------------------------------------------------------
 # Thin wrapper exposing the predict() interface expected by the objective
 # ---------------------------------------------------------------------------
+
 
 class _ChronosForecaster:
     """Wraps ChronosPipeline to expose predict(x (T, C)) -> (H, C)."""
@@ -54,7 +62,7 @@ class _ChronosForecaster:
             # forecast: (1, n_samples, H) for sample-based pipelines,
             # or (1, H) for point pipelines — take median.
             f = forecast[0]
-            if f.ndim == 2:          # (n_samples, H) → median
+            if f.ndim == 2:  # (n_samples, H) → median
                 f = f.median(dim=0).values
             preds.append(f.numpy())  # (H,)
 
@@ -64,6 +72,7 @@ class _ChronosForecaster:
 # ---------------------------------------------------------------------------
 # Solver
 # ---------------------------------------------------------------------------
+
 
 class Solver(BaseSolver):
     """Chronos zero-shot solver.
@@ -122,9 +131,7 @@ class Solver(BaseSolver):
             self._adapter = forecaster
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(
-                forecaster, prediction_length=1
-            )
+            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
 
     def get_result(self):
         return {"model": self._adapter}
