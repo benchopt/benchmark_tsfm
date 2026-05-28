@@ -33,6 +33,7 @@ from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
 
 
 SUPPORTED_TASKS = {"forecasting"}
@@ -150,10 +151,9 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 batch_size=self.batch_size,
             )
 
-            preds = self._gather_series_preds(
+            results.append(self._gather_series_output(
                 forecast_df, series_idx, C, cutoffs, fcds
-            )
-            results.append(preds)
+            ))
         return results
 
     def _predict_batched(self, x, cutoff_indexes, pd_freq, offsets):
@@ -206,28 +206,40 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         results = []
         for series_idx, C, index, cutoffs in per_series_meta:
             series_fcds = [pd.Timestamp(index[cutoff]) for cutoff in cutoffs]
-            preds = self._gather_series_preds(
+            results.append(self._gather_series_output(
                 forecast_df, series_idx, C, cutoffs, series_fcds
-            )
-            results.append(preds)
+            ))
         return results
 
-    def _gather_series_preds(self, forecast_df, series_idx, C, cutoffs, fcds):
-        value_col = f"{self.model}_q0.5"
-        if value_col not in forecast_df.columns:
-            value_col = str(self.model)
-        if value_col not in forecast_df.columns:
-            raise ValueError(
-                f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
-            )
+    def _gather_series_output(self, forecast_df, series_idx, C, cutoffs, fcds):
+        # Discover which quantile columns the SDK returned; fall back to
+        # the mean column only when no quantiles are present.
+        levels, quantile_cols = [], []
+        for q in self.quantiles:
+            col = f"{self.model}_q{q}"
+            if col in forecast_df.columns:
+                levels.append(q)
+                quantile_cols.append(col)
+        if not quantile_cols:
+            mean_col = str(self.model)
+            if mean_col not in forecast_df.columns:
+                raise ValueError(
+                    f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
+                )
+            levels = [0.5]
+            quantile_cols = [mean_col]
 
-        preds = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
+        Q = len(levels)
+        preds = np.empty(
+            (len(cutoffs), Q, self.prediction_length, C), dtype=np.float32
+        )
         for c in range(C):
             channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
             for k, fcd in enumerate(fcds):
                 window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(self.prediction_length)
-                preds[k, :, c] = window[value_col].to_numpy(dtype=np.float32)
-        return preds
+                for q_idx, col in enumerate(quantile_cols):
+                    preds[k, q_idx, :, c] = window[col].to_numpy(dtype=np.float32)
+        return ForecastOutput(quantiles=preds, quantile_levels=tuple(levels))
 
 
 class Solver(BaseSolver):

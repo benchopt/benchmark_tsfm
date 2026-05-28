@@ -55,9 +55,10 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
 
         from benchmark_utils.inputs import ForecastInput
         try:
-            preds = self.forecaster.predict(
+            output = self.forecaster.predict(
                 ForecastInput(x=[x], cutoff_indexes=[cutoffs])
-            )[0]  # (n_cutoffs, H, C)
+            )[0]
+            preds = output.point  # (n_cutoffs, H, C)
         except Exception:
             return scores
 

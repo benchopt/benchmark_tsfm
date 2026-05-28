@@ -21,6 +21,7 @@ from benchopt import BaseSolver
 
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
 
 
 SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
@@ -60,7 +61,10 @@ class _ChronosForecaster:
                     if f.ndim == 2:
                         f = f.median(dim=0).values
                     out[k, :, c] = f.numpy()
-            results.append(out)
+            results.append(ForecastOutput(
+                quantiles=out[:, None, :, :],
+                quantile_levels=(0.5,),
+            ))
         return results
 
 

@@ -7,11 +7,17 @@ Predict signature by task
 --------------------------
 forecasting:
 
-    predict(x: ForecastInput) -> list[np.ndarray (n_cutoffs_i, prediction_length, C)]
+    predict(x: ForecastInput) -> Sequence[ForecastOutput]
 
   :class:`~benchmark_utils.inputs.ForecastInput` bundles the per-series
   history list, the jagged per-series cutoff indexes, and a
   :class:`~benchmark_utils.covariates.Covariates` dataclass.
+
+  :class:`~benchmark_utils.outputs.ForecastOutput` carries the
+  quantile-resolved forecast — shape
+  ``(n_cutoffs, Q, prediction_length, C)`` plus the matching quantile
+  levels. Point forecasters set ``quantile_levels=(0.5,)`` and Q=1.
+
   ``prediction_length`` is dataset-level — the solver reads it from the
   objective and wires it into the adapter at construction time.
 

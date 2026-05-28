@@ -13,6 +13,7 @@ from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,10 @@ class _NaiveForecaster(BaseTSFMAdapter):
                 pattern = hist[-season:]
                 reps = int(np.ceil(self.prediction_length / season))
                 preds[k] = np.tile(pattern, (reps, 1))[:self.prediction_length]
-            results.append(preds)
+            results.append(ForecastOutput(
+                quantiles=preds[:, None, :, :],  # (n_cutoffs, 1, H, C)
+                quantile_levels=(0.5,),
+            ))
         return results
 
 

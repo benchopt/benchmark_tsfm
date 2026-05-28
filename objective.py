@@ -114,7 +114,7 @@ class Objective(BaseObjective):
     def _eval_forecasting(self, model):
         from benchmark_utils.inputs import ForecastInput
 
-        preds_per_series = model.predict(
+        outputs_per_series = model.predict(
             ForecastInput(
                 x=self.X_test,
                 cutoff_indexes=self.cutoff_indexes,
@@ -123,9 +123,9 @@ class Objective(BaseObjective):
         )
 
         preds, targets = [], []
-        for series_preds, series_targets in zip(preds_per_series, self.y_test):
-            sp = np.asarray(series_preds)  # (n_cutoffs, H, C)
-            st = np.asarray(series_targets)  # (n_cutoffs, H, C)
+        for series_output, series_targets in zip(outputs_per_series, self.y_test):
+            sp = np.asarray(series_output.point)  # (n_cutoffs, H, C)
+            st = np.asarray(series_targets)
             for k in range(sp.shape[0]):
                 preds.append(sp[k])
                 targets.append(st[k])
@@ -172,6 +172,7 @@ class Objective(BaseObjective):
     def get_one_result(self):
         """Return a minimal valid result for benchopt's internal checks."""
         from benchmark_utils.adapters.base import BaseTSFMAdapter
+        from benchmark_utils.outputs import ForecastOutput
 
         class _ConstantAdapter(BaseTSFMAdapter):
             def __init__(self, task, prediction_length):
@@ -181,11 +182,12 @@ class Objective(BaseObjective):
             def predict(self, x):
                 if self._task == "forecasting":
                     H = self._prediction_length
-                    preds = []
+                    outs = []
                     for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
-                        preds.append(np.zeros((len(cutoffs), H, C), dtype=np.float32))
-                    return preds
+                        q = np.zeros((len(cutoffs), 1, H, C), dtype=np.float32)
+                        outs.append(ForecastOutput(quantiles=q, quantile_levels=(0.5,)))
+                    return outs
                 elif self._task == "classification":
                     return np.zeros(len(x), dtype=np.int64)
                 elif self._task == "anomaly_detection":
