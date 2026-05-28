@@ -9,29 +9,33 @@ Data contract
 All datasets must return (via ``get_data``):
 
     X_train : List[np.ndarray (T_i, C)]   training time series
-    y_train : array-like or None           task-specific (see below)
-    X_test  : List[np.ndarray (T_j, C)]   test contexts / series
-    y_test  : array-like                   task-specific (see below)
+    y_train : array-like or None          task-specific (see below)
+    X_test  : List[np.ndarray]            test data (shape depends on task)
+    y_test  : array-like                  task-specific (see below)
     task    : str  one of {"forecasting", "classification",
                             "anomaly_detection"}
     metrics : List[str]  names from benchmark_utils.metrics.ALL_METRICS
 
 Task-specific shapes
 --------------------
-forecasting        y_train  List[(H, C)] or None
-                   y_test   List[(H, C)]
-                   extra    prediction_length (int), freq (str)
-classification     y_train  (N,) int
-                   y_test   (M,) int
-                   extra    n_classes (int)
-anomaly_detection  y_train  None
-                   y_test   List[(T_j,)] int  point-level binary labels
+forecasting        X_test         List[(T_i, C)]  full series — adapter uses
+                                                  ``x[:cutoff]`` as history
+                   cutoff_indexes List[List[int]] jagged per-series cutoffs
+                   y_test         List[(n_cutoffs, H, C)]
+                   covariates     dict           {static_covars, hist_covars,
+                                                  future_covars}
+                   extra          prediction_length (int), freq (str)
+classification     y_train        (N,) int
+                   y_test         (M,) int
+                   extra          n_classes (int)
+anomaly_detection  y_train        None
+                   y_test         List[(T_j,)] int  point-level labels
 
 Solver contract
 ---------------
 ``Solver.get_result()`` must return ``{"model": adapter}`` where ``adapter``
-is a fitted :class:`~benchmark_utils.adapters.base.BaseTSFMAdapter` with a
-``predict(x: np.ndarray (T, C)) -> np.ndarray`` method.
+is a fitted :class:`~benchmark_utils.adapters.base.BaseTSFMAdapter`.
+See that module for per-task predict signatures.
 """
 
 import numpy as np
@@ -60,11 +64,18 @@ class Objective(BaseObjective):
     # ------------------------------------------------------------------
 
     def set_data(self, X_train, y_train, X_test, y_test,
-                 task, metrics, **meta):
+                 task, metrics, cutoff_indexes=None, covariates=None,
+                 **meta):
         self.X_train = X_train
         self.y_train = y_train
         self.X_test = X_test
         self.y_test = y_test
+        self.cutoff_indexes = cutoff_indexes
+        self.covariates = covariates or {
+            "static_covars": [],
+            "hist_covars": [],
+            "future_covars": [],
+        }
         self.task = task
         self.metrics = metrics
         self.meta = meta  # freq, prediction_length, n_classes, …
@@ -98,13 +109,23 @@ class Objective(BaseObjective):
     # --- forecasting ---------------------------------------------------
 
     def _eval_forecasting(self, model):
-        preds, targets = [], []
-        for x, y in zip(self.X_test, self.y_test):
-            pred = np.asarray(model.predict(x))   # (H, C)
-            preds.append(pred)
-            targets.append(np.asarray(y))
+        horizon = self.meta.get("prediction_length", 1)
+        preds_per_series = model.predict(
+            self.X_test,
+            cutoff_indexes=self.cutoff_indexes,
+            covariates=self.covariates,
+            horizon=horizon,
+        )
 
-        preds = np.array(preds)    # (M, H, C)
+        preds, targets = [], []
+        for series_preds, series_targets in zip(preds_per_series, self.y_test):
+            sp = np.asarray(series_preds)  # (n_cutoffs, H, C)
+            st = np.asarray(series_targets)  # (n_cutoffs, H, C)
+            for k in range(sp.shape[0]):
+                preds.append(sp[k])
+                targets.append(st[k])
+
+        preds = np.array(preds)
         targets = np.array(targets)
 
         result = {}
@@ -148,19 +169,27 @@ class Objective(BaseObjective):
         from benchmark_utils.adapters.base import BaseTSFMAdapter
 
         class _ConstantAdapter(BaseTSFMAdapter):
-            def __init__(self, task, meta, X_test):
+            def __init__(self, task, meta):
                 self._task = task
                 self._meta = meta
-                self._X_test = X_test
 
-            def predict(self, x):
+            def predict(self, *args, **kwargs):
                 if self._task == "forecasting":
-                    H = self._meta.get("prediction_length", 1)
-                    C = x.shape[1] if x.ndim == 2 else 1
-                    return np.zeros((H, C))
+                    x = args[0]
+                    cutoff_indexes = kwargs.get(
+                        "cutoff_indexes", args[1] if len(args) > 1 else None
+                    )
+                    H = kwargs.get("horizon", self._meta.get("prediction_length", 1))
+                    preds = []
+                    for series, cutoffs in zip(x, cutoff_indexes or []):
+                        C = series.shape[1] if series.ndim == 2 else 1
+                        preds.append(np.zeros((len(cutoffs), H, C), dtype=np.float32))
+                    return preds
                 elif self._task == "classification":
-                    return 0
+                    x = args[0]
+                    return np.zeros(len(x), dtype=np.int64)
                 elif self._task == "anomaly_detection":
-                    return np.zeros(x.shape[0])
+                    x = args[0]
+                    return np.zeros(x.shape[0], dtype=np.float32)
 
-        return {"model": _ConstantAdapter(self.task, self.meta, self.X_test)}
+        return {"model": _ConstantAdapter(self.task, self.meta)}

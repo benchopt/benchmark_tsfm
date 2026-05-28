@@ -1,17 +1,36 @@
 """Base interface that all task adapters must implement.
 
 A *fitted* adapter is what solvers return via ``get_result()``.
-The objective calls ``adapter.predict(x)`` for each test sample.
+The objective calls ``adapter.predict(...)`` with task-appropriate inputs.
 
 Predict signature by task
 --------------------------
-forecasting      : x (T, C)  →  y_pred (H, C)
-classification   : x (T, C)  →  int label
-anomaly detection: x (T, C)  →  scores (T,) float — one score per timestep
+forecasting:
+
+    predict(
+        x: list[np.ndarray (T_i, C)],
+        cutoff_indexes: list[list[int]],
+        covariates: dict,
+        horizon: int,
+    ) -> list[np.ndarray (n_cutoffs_i, horizon, C)]
+
+  ``cutoff_indexes[i][k]`` is the timestep index in ``x[i]`` at which
+  the k-th forecast for series ``i`` starts. The model must use only
+  ``x[i][:cutoff]`` as history. The ``covariates`` dict has shape
+  ``{"static_covars": list, "hist_covars": list, "future_covars": list}``;
+  the keys are always present (empty lists when unused).
+
+classification:
+
+    predict(x: np.ndarray (N, T, C)) -> np.ndarray (N,) int labels
+
+anomaly detection:
+
+    predict(x: np.ndarray (T, C)) -> np.ndarray (T,) float anomaly scores
 """
 
 from abc import ABC, abstractmethod
-import numpy as np
+from typing import Any
 
 
 class BaseTSFMAdapter(ABC):
@@ -26,16 +45,5 @@ class BaseTSFMAdapter(ABC):
         return self
 
     @abstractmethod
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        """Run inference on a single sample.
-
-        Parameters
-        ----------
-        x : np.ndarray, shape (T, C)
-            One time series (variable length allowed).
-
-        Returns
-        -------
-        np.ndarray
-            Task-specific output — see module docstring.
-        """
+    def predict(self, *args, **kwargs) -> Any:
+        """Task-specific inference. See module docstring for per-task signatures."""

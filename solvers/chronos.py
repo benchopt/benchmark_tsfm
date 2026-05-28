@@ -30,35 +30,37 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 # ---------------------------------------------------------------------------
 
 class _ChronosForecaster:
-    """Wraps ChronosPipeline to expose predict(x (T, C)) -> (H, C)."""
+    """Wraps ChronosPipeline with the batched series+cutoffs predict API."""
 
-    def __init__(self, pipeline, prediction_length):
+    def __init__(self, pipeline):
         self.pipeline = pipeline
-        self.prediction_length = prediction_length
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
+    def predict(self, x, cutoff_indexes, covariates, horizon):
+        del covariates
         import torch
 
-        x = np.asarray(x, dtype=np.float32)  # (T, C)
-        C = x.shape[1]
-
-        # Chronos expects (batch, time) tensors — one channel at a time,
-        # then stack.
-        preds = []
-        for c in range(C):
-            context = torch.from_numpy(x[:, c]).unsqueeze(0)  # (1, T)
-            forecast = self.pipeline.predict(
-                context,
-                prediction_length=self.prediction_length,
-            )
-            # forecast: (1, n_samples, H) for sample-based pipelines,
-            # or (1, H) for point pipelines — take median.
-            f = forecast[0]
-            if f.ndim == 2:          # (n_samples, H) → median
-                f = f.median(dim=0).values
-            preds.append(f.numpy())  # (H,)
-
-        return np.stack(preds, axis=-1).astype(np.float32)  # (H, C)
+        results = []
+        for series, cutoffs in zip(x, cutoff_indexes):
+            series = np.asarray(series, dtype=np.float32)
+            C = series.shape[1] if series.ndim == 2 else 1
+            out = np.empty((len(cutoffs), horizon, C), dtype=np.float32)
+            for k, cutoff in enumerate(cutoffs):
+                hist = series[:cutoff]
+                if hist.ndim == 1:
+                    hist = hist[:, None]
+                # Chronos expects (batch, time) — one channel at a time.
+                for c in range(C):
+                    context = torch.from_numpy(hist[:, c]).unsqueeze(0)
+                    forecast = self.pipeline.predict(
+                        context,
+                        prediction_length=horizon,
+                    )
+                    f = forecast[0]
+                    if f.ndim == 2:
+                        f = f.median(dim=0).values
+                    out[k, :, c] = f.numpy()
+            results.append(out)
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +117,7 @@ class Solver(BaseSolver):
             self._loaded_model = model_id
 
     def run(self, _):
-        pred_len = self.meta.get("prediction_length", 1)
-        forecaster = _ChronosForecaster(self._pipeline, pred_len)
+        forecaster = _ChronosForecaster(self._pipeline)
 
         if self.task == "forecasting":
             self._adapter = forecaster

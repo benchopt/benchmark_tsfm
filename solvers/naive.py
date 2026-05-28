@@ -21,18 +21,24 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 class _NaiveForecaster(BaseTSFMAdapter):
     """Repeat the last ``seasonality`` values to fill the horizon."""
 
-    def __init__(self, prediction_length, seasonality=1):
-        self.prediction_length = prediction_length
+    def __init__(self, seasonality=1):
         self.seasonality = seasonality
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        # x: (T, C)
-        T, C = x.shape
-        season = min(self.seasonality, T)
-        pattern = x[-season:]                # (season, C)
-        reps = int(np.ceil(self.prediction_length / season))
-        forecast = np.tile(pattern, (reps, 1))[:self.prediction_length]
-        return forecast.astype(np.float32)   # (H, C)
+    def predict(self, x, cutoff_indexes, covariates, horizon):
+        del covariates
+        results = []
+        for series, cutoffs in zip(x, cutoff_indexes):
+            series = np.asarray(series)
+            C = series.shape[1] if series.ndim == 2 else 1
+            preds = np.empty((len(cutoffs), horizon, C), dtype=np.float32)
+            for k, cutoff in enumerate(cutoffs):
+                hist = series[:cutoff]
+                season = min(self.seasonality, hist.shape[0])
+                pattern = hist[-season:]
+                reps = int(np.ceil(horizon / season))
+                preds[k] = np.tile(pattern, (reps, 1))[:horizon]
+            results.append(preds)
+        return results
 
 
 class _MajorityClassifier(BaseTSFMAdapter):
@@ -94,8 +100,7 @@ class Solver(BaseSolver):
 
     def run(self, _):
         if self.task == "forecasting":
-            pred_len = self.meta.get("prediction_length", 1)
-            self._adapter = _NaiveForecaster(pred_len, self.seasonality)
+            self._adapter = _NaiveForecaster(self.seasonality)
 
         elif self.task == "classification":
             self._adapter = _MajorityClassifier()
