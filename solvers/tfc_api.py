@@ -31,9 +31,18 @@ SUPPORTED_TASKS = {"forecasting"}
 # Map benchmark freq codes to API-accepted pandas-like aliases.
 _FREQ_REMAP = {"T": "min", "S": "10S"}
 
+# pandas >=2 deprecates Y/Q/M/H in favor of YE/QE/ME/h for ``pd.date_range``,
+# but the TFC API still expects the short forms. Use the long forms only when
+# generating synthetic indices.
+_PD_FREQ_REMAP = {"Y": "YE", "Q": "QE", "M": "ME"}
+
 
 def _to_api_freq(freq: str) -> str:
     return _FREQ_REMAP.get(freq, freq)
+
+
+def _to_pandas_freq(api_freq: str) -> str:
+    return _PD_FREQ_REMAP.get(api_freq, api_freq)
 
 
 class _TFCAPIForecaster(BaseTSFMAdapter):
@@ -78,7 +87,7 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
 
         # One unique_id per channel; let pandas pick a start date — the API
         # only uses ``ds`` for frequency alignment, not for absolute time.
-        index = pd.date_range("2000-01-01", periods=T, freq=self.freq)
+        index = pd.date_range("2000-01-01", periods=T, freq=_to_pandas_freq(self.freq))
         frames = []
         for c in range(C):
             frames.append(
@@ -168,10 +177,20 @@ class Solver(BaseSolver):
 
     def set_objective(self, X_train, y_train, task, **meta):
         from theforecastingcompany import TFCClient
+        from theforecastingcompany.utils import TFCModels
 
         self.task = task
         self.X_train = X_train
         self.meta = meta
+
+        try:
+            self._model_enum = TFCModels(self.model)
+        except ValueError as e:
+            known = ", ".join(m.value for m in TFCModels)
+            raise ValueError(
+                f"Unknown TFC model '{self.model}'. Known SDK models: {known}. "
+                f"For custom T0 checkpoints, add the value to TFCModels first."
+            ) from e
 
         if not hasattr(self, "_client"):
             self._client = TFCClient()
@@ -179,7 +198,7 @@ class Solver(BaseSolver):
     def run(self, _):
         self._adapter = _TFCAPIForecaster(
             client=self._client,
-            model=self.model,
+            model=self._model_enum,
             prediction_length=self.meta.get("prediction_length", 1),
             freq=self.meta.get("freq", "D"),
             context=self.context,
