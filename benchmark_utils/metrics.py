@@ -171,6 +171,158 @@ def _point_adjust(y_true, y_pred):
         y_pred_adj[seg_start:] = 1
     return y_pred_adj
 
+# VUS metrics
+# Ported from https://github.com/thedatumorg/VUS, vus/utils/metrics.py
+# (`RangeAUC_volume_opt`) and vus/analysis/robustness_eval.py
+# (`generate_curve`). Reference: Paparrizos et al., "Volume Under the
+# Surface: A New Accuracy Evaluation Measure for Time-Series Anomaly
+# Detection".
+
+
+def _segments(labels):
+    """Return list of (start, end) inclusive anomaly segments."""
+    labels = np.asarray(labels)
+    out = []
+    i = 0
+    n = len(labels)
+    while i < n:
+        if labels[i] == 0:
+            i += 1
+            continue
+        j = i
+        while j < n and labels[j] != 0:
+            j += 1
+        out.append((i, j - 1))
+        i = j
+    return out
+
+
+def _extend_labels(labels, segments, window):
+    """Soft-extend each anomaly segment by `window // 2` on each side with
+    a sqrt fade, clipped to [0, 1]."""
+    extended = labels.astype(float).copy()
+    n = len(extended)
+    if window == 0:
+        return extended
+    for s, e in segments:
+        x1 = np.arange(e + 1, min(e + window // 2 + 1, n))
+        if len(x1):
+            extended[x1] += np.sqrt(1 - (x1 - e) / window)
+        x2 = np.arange(max(s - window // 2, 0), s)
+        if len(x2):
+            extended[x2] += np.sqrt(1 - (s - x2) / window)
+    return np.minimum(extended, 1.0)
+
+
+def _merge_segments(segments, window, n):
+    """Merge segments whose `window // 2` halos overlap."""
+    if not segments:
+        return []
+    half = window // 2
+    a = max(segments[0][0] - half, 0)
+    merged = []
+    for i in range(len(segments) - 1):
+        if segments[i][1] + half < segments[i + 1][0] - half:
+            merged.append((a, segments[i][1] + half))
+            a = segments[i + 1][0] - half
+    merged.append((a, min(segments[-1][1] + half, n - 1)))
+    return merged
+
+
+def _range_auc_volume(labels, score, window_size, thre=250):
+    """Compute (VUS_ROC, VUS_PR) for one (labels, score) pair."""
+    labels = np.asarray(labels)
+    score = np.asarray(score, dtype=float)
+    n = len(labels)
+    P = labels.sum()
+    seq = _segments(labels)
+    l_full = _merge_segments(seq, window_size, n)
+
+    score_sorted = -np.sort(-score)
+    thresholds_idx = np.linspace(0, n - 1, thre).astype(int)
+    N_pred = np.array([(score >= score_sorted[i]).sum() for i in thresholds_idx])
+
+    auc = np.zeros(window_size + 1)
+    ap = np.zeros(window_size + 1)
+
+    for w in range(window_size + 1):
+        labels_ext = _extend_labels(labels, seq, w)
+        L = _merge_segments(seq, w, n)
+
+        tf = np.zeros((thre + 2, 2))
+        prec = np.ones(thre + 1)
+
+        for j, i in enumerate(thresholds_idx, start=1):
+            pred = score >= score_sorted[i]
+            lab = labels_ext.copy()
+            existence = 0
+            for s, e in L:
+                lab[s : e + 1] = labels_ext[s : e + 1] * pred[s : e + 1]
+                if pred[s : e + 1].any():
+                    existence += 1
+            for s, e in seq:
+                lab[s : e + 1] = 1
+
+            TP = 0.0
+            N_labels = 0.0
+            for s, e in l_full:
+                TP += np.dot(lab[s : e + 1], pred[s : e + 1])
+                N_labels += lab[s : e + 1].sum()
+
+            FP = N_pred[j - 1] - TP
+            existence_ratio = existence / len(L) if L else 0.0
+
+            P_new = (P + N_labels) / 2
+            recall = min(TP / P_new, 1) if P_new > 0 else 0.0
+            tpr = recall * existence_ratio
+            fpr = FP / (n - P_new) if (n - P_new) > 0 else 0.0
+            precision = TP / N_pred[j - 1] if N_pred[j - 1] > 0 else 0.0
+
+            tf[j] = (tpr, fpr)
+            prec[j] = precision
+
+        tf[-1] = (1, 1)
+
+        width = tf[1:, 1] - tf[:-1, 1]
+        height = (tf[1:, 0] + tf[:-1, 0]) / 2
+        auc[w] = np.dot(width, height)
+
+        width_pr = tf[1:-1, 0] - tf[:-2, 0]
+        height_pr = prec[1:]
+        ap[w] = np.dot(width_pr, height_pr)
+
+    return float(auc.mean()), float(ap.mean())
+
+
+def _vus_per_series(y_true, y_score, slidingWindow, thre):
+    """Average a chosen VUS scalar across non-empty series."""
+    rocs, prs = [], []
+    for yt, ys in zip(y_true, y_score):
+        yt = np.asarray(yt)
+        ys = np.asarray(ys)
+        if yt.sum() == 0:
+            continue
+        roc, pr = _range_auc_volume(yt, ys, slidingWindow, thre)
+        rocs.append(roc)
+        prs.append(pr)
+    if not rocs:
+        return float("nan"), float("nan")
+    return float(np.mean(rocs)), float(np.mean(prs))
+
+
+def vus_roc(y_true, y_score, slidingWindow=100, thre=250):
+    """Volume Under the Surface (ROC).
+
+    Averaged per series. `slidingWindow` is the upper bound of the window
+    axis for the volume integration; callers benchmarking heterogeneous
+    series should pass a per-dataset value.
+    """
+    return _vus_per_series(y_true, y_score, slidingWindow, thre)[0]
+
+
+def vus_pr(y_true, y_score, slidingWindow=100, thre=250):
+    """Volume Under the Surface (PR). Averaged per series."""
+    return _vus_per_series(y_true, y_score, slidingWindow, thre)[1]
 
 # ---------------------------------------------------------------------------
 # Registry: maps metric name → function
@@ -194,6 +346,8 @@ AD_METRICS = {
     "auc_roc": auc_roc,
     "auc_pr": auc_pr,
     "f1_pa": f1_pa,
+    "vus_roc": vus_roc,
+    "vus_pr": vus_pr,
 }
 
 ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS}
