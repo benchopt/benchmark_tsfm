@@ -52,7 +52,7 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         self._label_enc = LabelEncoder()
 
     def fit(self, X_train, y_train, **kwargs):
-        embeddings = np.stack([self.encoder.encode(x) for x in X_train])
+        embeddings = self.encoder.encode(X_train)
 
         if self.task == "classification":
             y_enc = self._label_enc.fit_transform(y_train)
@@ -97,17 +97,17 @@ class LinearProbeAdapter(BaseTSFMAdapter):
 
         return self
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        emb = self.encoder.encode(x)
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        emb = self.encoder.encode(X)
 
         if self.task == "classification":
-            label_enc = self._head.predict([emb])[0]
-            return int(self._label_enc.inverse_transform([label_enc])[0])
+            label_enc = self._head.predict(emb)
+            return self._label_enc.inverse_transform(label_enc)
 
         elif self.task == "anomaly_detection":
             # Score: L2 distance from the training mean embedding,
             # broadcast to every timestep (uniform window score).
             score = float(np.linalg.norm(emb - self._train_mean))
-            return np.full(x.shape[0], score, dtype=np.float32)
+            return np.full(X.shape[0], score, dtype=np.float32)
 
         raise ValueError(f"Unknown task: {self.task}")
