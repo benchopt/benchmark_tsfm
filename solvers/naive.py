@@ -24,19 +24,19 @@ class _NaiveForecaster(BaseTSFMAdapter):
     def __init__(self, seasonality=1):
         self.seasonality = seasonality
 
-    def predict(self, x, cutoff_indexes, covariates, horizon):
+    def predict(self, x, cutoff_indexes, covariates, prediction_length):
         del covariates
         results = []
         for series, cutoffs in zip(x, cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            preds = np.empty((len(cutoffs), horizon, C), dtype=np.float32)
+            preds = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 season = min(self.seasonality, hist.shape[0])
                 pattern = hist[-season:]
-                reps = int(np.ceil(horizon / season))
-                preds[k] = np.tile(pattern, (reps, 1))[:horizon]
+                reps = int(np.ceil(prediction_length / season))
+                preds[k] = np.tile(pattern, (reps, 1))[:prediction_length]
             results.append(preds)
         return results
 

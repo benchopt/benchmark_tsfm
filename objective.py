@@ -109,12 +109,12 @@ class Objective(BaseObjective):
     # --- forecasting ---------------------------------------------------
 
     def _eval_forecasting(self, model):
-        horizon = self.meta.get("prediction_length", 1)
+        prediction_length = self.meta.get("prediction_length", 1)
         preds_per_series = model.predict(
             self.X_test,
             cutoff_indexes=self.cutoff_indexes,
             covariates=self.covariates,
-            horizon=horizon,
+            prediction_length=prediction_length,
         )
 
         preds, targets = [], []
@@ -179,7 +179,7 @@ class Objective(BaseObjective):
                     cutoff_indexes = kwargs.get(
                         "cutoff_indexes", args[1] if len(args) > 1 else None
                     )
-                    H = kwargs.get("horizon", self._meta.get("prediction_length", 1))
+                    H = kwargs.get("prediction_length", self._meta.get("prediction_length", 1))
                     preds = []
                     for series, cutoffs in zip(x, cutoff_indexes or []):
                         C = series.shape[1] if series.ndim == 2 else 1

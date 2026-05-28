@@ -11,8 +11,8 @@ forecasting:
         x: list[np.ndarray (T_i, C)],
         cutoff_indexes: list[list[int]],
         covariates: dict,
-        horizon: int,
-    ) -> list[np.ndarray (n_cutoffs_i, horizon, C)]
+        prediction_length: int,
+    ) -> list[np.ndarray (n_cutoffs_i, prediction_length, C)]
 
   ``cutoff_indexes[i][k]`` is the timestep index in ``x[i]`` at which
   the k-th forecast for series ``i`` starts. The model must use only

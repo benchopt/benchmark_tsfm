@@ -35,7 +35,7 @@ class _ChronosForecaster:
     def __init__(self, pipeline):
         self.pipeline = pipeline
 
-    def predict(self, x, cutoff_indexes, covariates, horizon):
+    def predict(self, x, cutoff_indexes, covariates, prediction_length):
         del covariates
         import torch
 
@@ -43,7 +43,7 @@ class _ChronosForecaster:
         for series, cutoffs in zip(x, cutoff_indexes):
             series = np.asarray(series, dtype=np.float32)
             C = series.shape[1] if series.ndim == 2 else 1
-            out = np.empty((len(cutoffs), horizon, C), dtype=np.float32)
+            out = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 if hist.ndim == 1:
@@ -53,7 +53,7 @@ class _ChronosForecaster:
                     context = torch.from_numpy(hist[:, c]).unsqueeze(0)
                     forecast = self.pipeline.predict(
                         context,
-                        prediction_length=horizon,
+                        prediction_length=prediction_length,
                     )
                     f = forecast[0]
                     if f.ndim == 2:

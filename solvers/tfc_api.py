@@ -8,11 +8,20 @@ Authentication
 The SDK reads ``TFC_API_KEY`` from the environment by default. Sign in at
 https://docs.retrocast.com/settings/api-keys to get one.
 
+Batching
+--------
+Models that report ``supports_batching == True`` (chronos-2, moirai-2,
+T0-1535, T0-1638) are sent in a single ``cross_validate`` call with all
+series stacked into one DataFrame. Series are aligned so their cutoffs
+share a common set of ``fcds``; the SDK then builds the (V, T) tensor
+internally with one ``unique_id`` per series-channel acting as the
+group id Chronos-2 keys on. When cutoff offsets-from-end are not
+homogeneous across series, the solver falls back to a per-series loop.
+
 Adding a new model
 ------------------
 Pass any model id from ``theforecastingcompany.utils.TFCModels`` via the
-``model`` parameter (e.g. ``"chronos-2"``, ``"timesfm-2p5"``,
-``"tfc-global"``, ``"T0-1638-step-85000"``).
+``model`` parameter.
 """
 
 import os
@@ -43,8 +52,28 @@ def _to_pandas_freq(api_freq: str) -> str:
     return _PD_FREQ_REMAP.get(api_freq, api_freq)
 
 
+def _shared_offsets_from_end(x, cutoff_indexes):
+    """Return per-series cutoff offsets if shared across series, else None."""
+    if not cutoff_indexes:
+        return None
+    reference = None
+    for series, cutoffs in zip(x, cutoff_indexes):
+        T = np.asarray(series).shape[0]
+        offsets = tuple(T - c for c in cutoffs)
+        if reference is None:
+            reference = offsets
+        elif offsets != reference:
+            return None
+    return reference
+
+
 class _TFCAPIForecaster(BaseTSFMAdapter):
-    """Batched adapter that calls ``client.cross_validate`` per series."""
+    """Adapter calling the TFC SDK.
+
+    Uses a single batched ``cross_validate`` call when the model supports
+    batching and series share cutoff offsets; falls back to one call per
+    series otherwise.
+    """
 
     def __init__(
         self,
@@ -72,13 +101,19 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         self.country_isocode = country_isocode
         self.batch_size = batch_size
 
-    def predict(self, x, cutoff_indexes, covariates, horizon):
+    def predict(self, x, cutoff_indexes, covariates, prediction_length):
         # TODO: thread ``covariates`` (static/hist/future) through to the SDK
         # once the benchmark datasets expose them. For now the dict is
         # ignored — Monash datasets carry no covariates.
         del covariates
         pd_freq = _to_pandas_freq(self.freq)
 
+        offsets = _shared_offsets_from_end(x, cutoff_indexes)
+        if getattr(self.model, "supports_batching", False) and offsets is not None:
+            return self._predict_batched(x, cutoff_indexes, prediction_length, pd_freq, offsets)
+        return self._predict_per_series(x, cutoff_indexes, prediction_length, pd_freq)
+
+    def _predict_per_series(self, x, cutoff_indexes, prediction_length, pd_freq):
         results = []
         for series_idx, (series, cutoffs) in enumerate(zip(x, cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
@@ -87,24 +122,21 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             T, C = series.shape
             index = pd.date_range("2000-01-01", periods=T, freq=pd_freq)
 
-            frames = []
-            for c in range(C):
-                frames.append(
-                    pd.DataFrame(
-                        {
-                            "unique_id": f"s{series_idx}_c{c}",
-                            "ds": index,
-                            "target": series[:, c],
-                        }
-                    )
-                )
+            frames = [
+                pd.DataFrame({
+                    "unique_id": f"s{series_idx}_c{c}",
+                    "ds": index,
+                    "target": series[:, c],
+                })
+                for c in range(C)
+            ]
             train_df = pd.concat(frames, ignore_index=True)
-
             fcds = [pd.Timestamp(index[cutoff]) for cutoff in cutoffs]
+
             forecast_df = self.client.cross_validate(
                 train_df,
                 model=self.model,
-                horizon=horizon,
+                horizon=prediction_length,
                 freq=self.freq,
                 fcds=fcds,
                 quantiles=self.quantiles,
@@ -115,22 +147,84 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 batch_size=self.batch_size,
             )
 
-            value_col = f"{self.model}_q0.5"
-            if value_col not in forecast_df.columns:
-                value_col = str(self.model)
-            if value_col not in forecast_df.columns:
-                raise ValueError(
-                    f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
-                )
-
-            preds = np.empty((len(cutoffs), horizon, C), dtype=np.float32)
-            for c in range(C):
-                channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
-                for k, fcd in enumerate(fcds):
-                    window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(horizon)
-                    preds[k, :, c] = window[value_col].to_numpy(dtype=np.float32)
+            preds = self._gather_series_preds(
+                forecast_df, series_idx, C, cutoffs, fcds, prediction_length
+            )
             results.append(preds)
         return results
+
+    def _predict_batched(self, x, cutoff_indexes, prediction_length, pd_freq, offsets):
+        """One ``cross_validate`` call covering every series in ``x``.
+
+        Series are aligned to share an end date so all cutoffs collapse to
+        the same set of timestamps. The SDK then groups by ``unique_id``
+        when building Chronos-2's (V, T) tensor.
+        """
+        end = pd.Timestamp("2030-01-01")
+        frames = []
+        per_series_meta = []  # (series_idx, C, index, cutoffs)
+        for series_idx, (series, cutoffs) in enumerate(zip(x, cutoff_indexes)):
+            series = np.asarray(series, dtype=np.float32)
+            if series.ndim == 1:
+                series = series[:, None]
+            T, C = series.shape
+            index = pd.date_range(end=end, periods=T, freq=pd_freq)
+            for c in range(C):
+                frames.append(
+                    pd.DataFrame({
+                        "unique_id": f"s{series_idx}_c{c}",
+                        "ds": index,
+                        "target": series[:, c],
+                    })
+                )
+            per_series_meta.append((series_idx, C, index, cutoffs))
+
+        train_df = pd.concat(frames, ignore_index=True)
+        # ``offsets`` is (T - cutoff) for any series, so the corresponding
+        # timestamp is end - (offset - 1) * delta. We let pandas pick the
+        # delta by walking the date_range backwards from ``end``.
+        ref_index = pd.date_range(end=end, periods=max(offsets) + 1, freq=pd_freq)
+        fcds = sorted({pd.Timestamp(ref_index[-offset]) for offset in offsets})
+
+        forecast_df = self.client.cross_validate(
+            train_df,
+            model=self.model,
+            horizon=prediction_length,
+            freq=self.freq,
+            fcds=fcds,
+            quantiles=self.quantiles,
+            context=self.context,
+            add_holidays=self.add_holidays,
+            add_events=self.add_events,
+            country_isocode=self.country_isocode,
+            batch_size=self.batch_size,
+        )
+
+        results = []
+        for series_idx, C, index, cutoffs in per_series_meta:
+            series_fcds = [pd.Timestamp(index[cutoff]) for cutoff in cutoffs]
+            preds = self._gather_series_preds(
+                forecast_df, series_idx, C, cutoffs, series_fcds, prediction_length
+            )
+            results.append(preds)
+        return results
+
+    def _gather_series_preds(self, forecast_df, series_idx, C, cutoffs, fcds, prediction_length):
+        value_col = f"{self.model}_q0.5"
+        if value_col not in forecast_df.columns:
+            value_col = str(self.model)
+        if value_col not in forecast_df.columns:
+            raise ValueError(
+                f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
+            )
+
+        preds = np.empty((len(cutoffs), prediction_length, C), dtype=np.float32)
+        for c in range(C):
+            channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
+            for k, fcd in enumerate(fcds):
+                window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(prediction_length)
+                preds[k, :, c] = window[value_col].to_numpy(dtype=np.float32)
+        return preds
 
 
 class Solver(BaseSolver):

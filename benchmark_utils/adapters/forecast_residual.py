@@ -58,7 +58,7 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
                 [x],
                 cutoff_indexes=[cutoffs],
                 covariates={"static_covars": [], "hist_covars": [], "future_covars": []},
-                horizon=self.prediction_length,
+                prediction_length=self.prediction_length,
             )[0]  # (n_cutoffs, H, C)
         except Exception:
             return scores
