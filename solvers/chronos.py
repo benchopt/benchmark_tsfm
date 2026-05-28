@@ -85,7 +85,7 @@ class Solver(BaseSolver):
 
     name = "Chronos"
 
-    requirements = ["pip::chronos-forecasting>=2.0", "pip::torch"]
+    requirements = ["pip::chronos-forecasting>=2.2,<3"]
 
     sampling_strategy = "run_once"
 
