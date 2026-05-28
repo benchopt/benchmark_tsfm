@@ -1,10 +1,10 @@
 """Chronos solver for the TSFM benchmark.
 
 Supports:
-  - forecasting        : zero-shot via ChronosPipeline
-  - anomaly_detection  : forecast-residual (zero-shot)
+  - forecasting     : zero-shot via ChronosPipeline
+  - classification  : linear probe on pooled encoder embeddings
 
-Classification is not yet implemented; the solver skips that task.
+Anomaly detection is currently broken and skipped.
 
 Model loading is done in ``set_objective`` (untimed).
 Adaptation fitting is done in ``run`` (timed).
@@ -24,10 +24,22 @@ import torch
 from benchopt import BaseSolver
 from chronos import Chronos2Pipeline, ChronosPipeline
 
-from benchmark_utils.adapters import UnpooledEncoder
-from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.adapters import (
+    Encoder,
+    LastPooler,
+    LinearProbeAdapter,
+    MaxPooler,
+    MeanPooler,
+    UnpooledEncoder,
+)
 
-SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
+SUPPORTED_TASKS = {"forecasting", "classification"}
+
+POOLERS = {
+    "mean": MeanPooler,
+    "max": MaxPooler,
+    "last": LastPooler,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -45,49 +57,43 @@ class _ChronosForecaster:
         self._median_idx = list(pipeline.quantiles).index(0.5)
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        # Chronos expects (batch, C, time) tensors.
-        x = np.asarray(x, dtype=np.float32).T[None]  # (N, C, T)
-
-        context = torch.from_numpy(x)
+        context = _to_context(x)  # (1, V, T)
         forecast = self.pipeline.predict(
             context,
             prediction_length=self.prediction_length,
         )
-        # forecast is a list of length batch; each entry has shape
-        # (n_variates, n_quantiles, H). Take the median quantile and cast
-        # to float32 (bfloat16 tensors can't be converted to numpy).
-        out = forecast[0].float().cpu().numpy()  # (C, Q, H)
-        return out[:, self._median_idx, :].T  # (H, C)
+        # forecast is a list of length B; each entry has shape (V, Q, H).
+        # Take the median quantile and cast to float32 (bfloat16 tensors
+        # can't be converted to numpy).
+        out = forecast[0].float().cpu().numpy()  # (V, Q, H)
+        return out[:, self._median_idx, :].T  # (H, V)
 
 
-def _to_context_tensor(x: np.ndarray):
-    """Convert ``(T,)`` or ``(T, C)`` array to ``(C, T)`` float32 tensor.
-
-    Channels become the batch dim so a single Chronos forward pass covers
-    all of them — Chronos is univariate, so channels are independent.
-    """
-
+def _to_context(x):
+    """Reshape ``(T, V)`` or ``(B, T, V)`` to Chronos input ``(B, V, T)``."""
     x = np.asarray(x, dtype=np.float32)
-    if x.ndim == 1:
-        x = x[:, None]
-    return torch.from_numpy(x.T)
+    if x.ndim == 2:
+        x = x[None]
+    return x.transpose(0, 2, 1)
 
 
 class _ChronosEmbedEncoder(UnpooledEncoder):
-    """Default path — uses ``ChronosPipeline.embed``.
+    """Default path — uses ``Chronos2Pipeline.embed``.
 
-    Returns hidden states *after* ``encoder.final_layer_norm``.
+    Returns hidden states *after* ``encoder.final_layer_norm`` for each
+    series in the batch.
     """
 
     def __init__(self, pipeline: ChronosPipeline):
         self.pipeline = pipeline
 
-    def encode(self, x: np.ndarray) -> np.ndarray:
-        context = _to_context_tensor(x)  # (C, T)
+    def encode(self, X) -> np.ndarray:
+        context = _to_context(X)  # (B, V, T)
         with torch.no_grad():
-            embeddings, _ = self.pipeline.embed(context)  # (C, T_tok, D)
-        # (C, T_tok, D) -> (T_tok, C, D)
-        return embeddings.transpose(0, 1).float().cpu().numpy()
+            # embed returns a list of B tensors, each of shape (V, T, D).
+            embeddings, _ = self.pipeline.embed(context)
+        stacked = torch.stack(list(embeddings))  # (B, V, T, D)
+        return stacked.transpose(1, 2).float().cpu().numpy()  # (B, T, V, D)
 
 
 class _ChronosHookEncoder(UnpooledEncoder):
@@ -107,9 +113,9 @@ class _ChronosHookEncoder(UnpooledEncoder):
         self._block_idx = layer % n_blocks
 
     def encode(self, x: np.ndarray) -> np.ndarray:
-        context = _to_context_tensor(x)  # (C, T)
-        token_ids, attn_mask, _ = (
-            self.pipeline.tokenizer.context_input_transform(context)
+        context = _to_context(x)  # (B, V, T)
+        token_ids, attn_mask, _ = self.pipeline.tokenizer.context_input_transform(
+            context
         )
         device = self.pipeline.model.device
         token_ids = token_ids.to(device)
@@ -180,10 +186,11 @@ class Solver(BaseSolver):
     ----------
     model_size : str
         Chronos model variant: "tiny", "mini", "small", "base", "large".
-    task_adaptation : str
-        How to use Chronos for each task:
-          "zeroshot"          — direct forecasting API (forecasting only)
-          "forecast_residual" — anomaly score = forecast error (AD only)
+    layer : int or None
+        Encoder block index for classification embeddings. ``None`` uses
+        ``ChronosPipeline.embed`` (post-final-norm).
+    pooler : {"mean", "max", "last"}
+        Pooling strategy over the time-token axis for classification.
     """
 
     name = "Chronos"
@@ -194,7 +201,8 @@ class Solver(BaseSolver):
 
     parameters = {
         "model_size": ["small"],
-        "task_adaptation": ["zeroshot"],
+        "layer": [None],
+        "pooler": ["mean"],
     }
 
     def skip(self, task, **kwargs):
@@ -208,6 +216,7 @@ class Solver(BaseSolver):
 
         self.task = task
         self.X_train = X_train
+        self.y_train = y_train
         self.meta = meta
 
         # Load model once; reuse across consecutive dataset configs.
@@ -225,16 +234,21 @@ class Solver(BaseSolver):
             self._loaded_model = model_id
 
     def run(self, _):
-        pred_len = self.meta.get("prediction_length", 1)
-        forecaster = _ChronosForecaster(self._pipeline, pred_len)
-
         if self.task == "forecasting":
-            self._adapter = forecaster
+            pred_len = self.meta.get("prediction_length", 1)
+            self._adapter = _ChronosForecaster(self._pipeline, pred_len)
+            return
 
-        elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(
-                forecaster, prediction_length=1
+        if self.task == "classification":
+            base_encoder = ChronosEncoder(self._pipeline, layer=self.layer)
+            encoder = Encoder(base_encoder, POOLERS[self.pooler]())
+            adapter = LinearProbeAdapter(
+                encoder,
+                task="classification",
+                n_classes=self.meta.get("n_classes"),
             )
+            adapter.fit(self.X_train, self.y_train)
+            self._adapter = adapter
 
     def get_result(self):
         return {"model": self._adapter}
