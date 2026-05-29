@@ -27,6 +27,7 @@ from benchmark_utils.adapters import (
     UnpooledEncoder,
 )
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.capabilities import MULTIVARIATE
 from benchmark_utils.outputs import ForecastOutput
 
 from .chronos import (
@@ -173,6 +174,11 @@ class Solver(BaseSolver):
     requirements = ["pip::chronos-forecasting>=2.2,<3"]
 
     sampling_strategy = "run_once"
+
+    # Chronos-2 models channels jointly. ``multivariate`` is declarative
+    # metadata only — targets are always passed whole, so there is no
+    # behavioural toggle yet. This solver does not consume covariates.
+    capabilities = frozenset({MULTIVARIATE})
 
     parameters = {
         "model_size": ["small"],

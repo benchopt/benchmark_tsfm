@@ -47,7 +47,20 @@ class BaseTSFMAdapter(ABC):
 
     Subclasses must implement ``predict``.  ``fit`` is optional (used by
     supervised adaptations such as linear probe or fine-tuning).
+
+    Attributes
+    ----------
+    covariate_capabilities : frozenset[str]
+        The *effective* covariate capabilities this adapter consumes for the
+        current run (a subset of
+        :data:`benchmark_utils.capabilities.COVARIATE_CAPABILITIES`). The
+        forecasting objective reads this and masks the covariate payload down
+        to it before calling :meth:`predict`, so an adapter only ever sees
+        covariates it both declares and has enabled. Defaults to empty —
+        univariate, no covariates — so a new adapter is safe by default.
     """
+
+    covariate_capabilities: frozenset = frozenset()
 
     def fit(self, X_train, y_train, **kwargs):
         """Optional supervised fitting step (called inside Solver.run())."""

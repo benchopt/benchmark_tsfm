@@ -32,6 +32,12 @@ import pandas as pd
 from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
+from benchmark_utils.capabilities import (
+    FUTURE_COVARIATES,
+    HIST_COVARIATES,
+    MULTIVARIATE,
+)
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
@@ -67,6 +73,47 @@ def _shared_offsets_from_end(x, cutoff_indexes):
         elif offsets != reference:
             return None
     return reference
+
+
+def _as_2d(arr) -> np.ndarray:
+    """Normalise a covariate cell to ``(T, n)``."""
+    arr = np.asarray(arr, dtype=np.float32)
+    return arr[:, None] if arr.ndim == 1 else arr
+
+
+def _covar_var_names(covariates: Covariates) -> tuple[list[str], list[str]]:
+    """Column names for the SDK's ``historical_variables`` / ``future_variables``.
+
+    Derived from the per-series covariate width (assumed homogeneous across
+    series). Empty lists when a covariate kind is absent — which is exactly
+    what the objective produces after masking off a deactivated capability.
+    """
+    hist_names, future_names = [], []
+    if covariates.hist_covars:
+        n = _as_2d(covariates.hist_covars[0]).shape[1]
+        hist_names = [f"hist_{j}" for j in range(n)]
+    if covariates.future_covars:
+        n = _as_2d(covariates.future_covars[0]).shape[1]
+        future_names = [f"future_{j}" for j in range(n)]
+    return hist_names, future_names
+
+
+def _attach_covars(frame, covariates: Covariates, series_idx: int):
+    """Add this series' covariate columns to a per-``unique_id`` frame.
+
+    Covariates are series-level, so every channel frame of a series gets the
+    same columns. Arrays span the full series length ``T`` (history *and*
+    horizon), so future-covariate values for each cutoff's horizon are present.
+    """
+    if covariates.hist_covars:
+        arr = _as_2d(covariates.hist_covars[series_idx])
+        for j in range(arr.shape[1]):
+            frame[f"hist_{j}"] = arr[:, j]
+    if covariates.future_covars:
+        arr = _as_2d(covariates.future_covars[series_idx])
+        for j in range(arr.shape[1]):
+            frame[f"future_{j}"] = arr[:, j]
+    return frame
 
 
 class _TFCAPIForecaster(BaseTSFMAdapter):
@@ -106,24 +153,30 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
         self.batch_size = batch_size
 
     def predict(self, x: ForecastInput) -> ForecastOutput:
-        # TODO: thread ``x.covariates`` (static/hist/future) through to the SDK
-        # once the benchmark datasets populate them. Monash currently
-        # carries none, so the dataclass arrives with empty sequences.
+        # ``x.covariates`` is already masked by the objective down to this
+        # adapter's ``covariate_capabilities`` — a deactivated (or
+        # undeclared) covariate kind arrives as an empty sequence, so the
+        # column/variable wiring below simply produces nothing for it.
         series_list, cutoff_indexes = x.x, x.cutoff_indexes
+        covariates = x.covariates
+        hist_names, future_names = _covar_var_names(covariates)
         pd_freq = _to_pandas_freq(self.freq)
 
         offsets = _shared_offsets_from_end(series_list, cutoff_indexes)
         if getattr(self.model, "supports_batching", False) and offsets is not None:
             per_series, levels = self._predict_batched(
-                series_list, cutoff_indexes, pd_freq, offsets
+                series_list, cutoff_indexes, pd_freq, offsets,
+                covariates, hist_names, future_names,
             )
         else:
             per_series, levels = self._predict_per_series(
-                series_list, cutoff_indexes, pd_freq
+                series_list, cutoff_indexes, pd_freq,
+                covariates, hist_names, future_names,
             )
         return ForecastOutput(quantiles=per_series, quantile_levels=levels)
 
-    def _predict_per_series(self, x, cutoff_indexes, pd_freq):
+    def _predict_per_series(self, x, cutoff_indexes, pd_freq,
+                            covariates, hist_names, future_names):
         per_series = []
         levels = None
         for series_idx, (series, cutoffs) in enumerate(zip(x, cutoff_indexes)):
@@ -134,11 +187,14 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             index = pd.date_range("2000-01-01", periods=T, freq=pd_freq)
 
             frames = [
-                pd.DataFrame({
-                    "unique_id": f"s{series_idx}_c{c}",
-                    "ds": index,
-                    "target": series[:, c],
-                })
+                _attach_covars(
+                    pd.DataFrame({
+                        "unique_id": f"s{series_idx}_c{c}",
+                        "ds": index,
+                        "target": series[:, c],
+                    }),
+                    covariates, series_idx,
+                )
                 for c in range(C)
             ]
             train_df = pd.concat(frames, ignore_index=True)
@@ -155,6 +211,8 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
                 add_holidays=self.add_holidays,
                 add_events=self.add_events,
                 country_isocode=self.country_isocode,
+                historical_variables=hist_names or None,
+                future_variables=future_names or None,
                 batch_size=self.batch_size,
             )
 
@@ -165,7 +223,8 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             levels = series_levels
         return per_series, (levels if levels is not None else (0.5,))
 
-    def _predict_batched(self, x, cutoff_indexes, pd_freq, offsets):
+    def _predict_batched(self, x, cutoff_indexes, pd_freq, offsets,
+                         covariates, hist_names, future_names):
         """One ``cross_validate`` call covering every series in ``x``.
 
         Series are aligned to share an end date so all cutoffs collapse to
@@ -183,11 +242,14 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             index = pd.date_range(end=end, periods=T, freq=pd_freq)
             for c in range(C):
                 frames.append(
-                    pd.DataFrame({
-                        "unique_id": f"s{series_idx}_c{c}",
-                        "ds": index,
-                        "target": series[:, c],
-                    })
+                    _attach_covars(
+                        pd.DataFrame({
+                            "unique_id": f"s{series_idx}_c{c}",
+                            "ds": index,
+                            "target": series[:, c],
+                        }),
+                        covariates, series_idx,
+                    )
                 )
             per_series_meta.append((series_idx, C, index, cutoffs))
 
@@ -209,6 +271,8 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             add_holidays=self.add_holidays,
             add_events=self.add_events,
             country_isocode=self.country_isocode,
+            historical_variables=hist_names or None,
+            future_variables=future_names or None,
             batch_size=self.batch_size,
         )
 
@@ -271,6 +335,12 @@ class Solver(BaseSolver):
         ``country_isocode`` to be set.
     country_isocode : str or None
         ISO country code (e.g. ``"US"``) used by the holiday/event lookup.
+    use_hist_covars, use_future_covars : bool
+        Whether to feed the dataset's historical / future covariates to the
+        model. Default ``True``; sweep over ``[True, False]`` to benchmark the
+        lift each covariate kind provides. Deactivating both runs the model
+        univariate. (The objective enforces this by masking the covariate
+        payload — see :mod:`benchmark_utils.capabilities`.)
     batch_size : int
         Series-per-batch for batching-enabled models (chronos-2, moirai-2).
     """
@@ -281,12 +351,20 @@ class Solver(BaseSolver):
 
     sampling_strategy = "run_once"
 
+    # Declared capabilities (metadata). ``multivariate`` is declarative only —
+    # targets are always passed whole, so there is no behavioural toggle for
+    # it yet. The two covariate capabilities are wired end-to-end and
+    # switchable via ``use_hist_covars`` / ``use_future_covars``.
+    capabilities = frozenset({MULTIVARIATE, HIST_COVARIATES, FUTURE_COVARIATES})
+
     parameters = {
         "model": ["chronos-2"],
         "context": [None],
         "add_holidays": [False],
         "add_events": [False],
         "country_isocode": [None],
+        "use_hist_covars": [True],
+        "use_future_covars": [True],
         "batch_size": [256],
     }
 
@@ -329,6 +407,15 @@ class Solver(BaseSolver):
             country_isocode=self.country_isocode,
             batch_size=self.batch_size,
         )
+        # Effective active covariate capabilities for this run = the toggled-on
+        # ones, intersected with what the model declares. The objective reads
+        # this to mask the covariate payload before calling predict().
+        active = set()
+        if self.use_hist_covars:
+            active.add(HIST_COVARIATES)
+        if self.use_future_covars:
+            active.add(FUTURE_COVARIATES)
+        self._adapter.covariate_capabilities = frozenset(active & self.capabilities)
 
     def get_result(self):
         return {"model": self._adapter}

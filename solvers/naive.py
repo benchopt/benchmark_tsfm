@@ -94,6 +94,9 @@ class Solver(BaseSolver):
 
     sampling_strategy = "run_once"
 
+    # Per-channel univariate baseline; consumes no covariates.
+    capabilities = frozenset()
+
     parameters = {
         "seasonality": [1],
     }

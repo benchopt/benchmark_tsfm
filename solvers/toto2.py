@@ -22,6 +22,7 @@ from benchmark_utils.adapters import (
 )
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.capabilities import MULTIVARIATE
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
@@ -264,6 +265,11 @@ class Solver(BaseSolver):
     ]
 
     sampling_strategy = "run_once"
+
+    # Toto models channels jointly. ``multivariate`` is declarative metadata
+    # only — targets are always passed whole, so there is no behavioural
+    # toggle yet. This solver does not consume covariates.
+    capabilities = frozenset({MULTIVARIATE})
 
     parameters = {
         "checkpoint": ["Datadog/Toto-2.0-2.5B"],

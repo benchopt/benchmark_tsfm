@@ -253,6 +253,9 @@ class Solver(BaseSolver):
 
     sampling_strategy = "run_once"
 
+    # Chronos (v1) is univariate and consumes no covariates.
+    capabilities = frozenset()
+
     parameters = {
         "model_size": ["small"],
         "layer": [None],

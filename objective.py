@@ -117,13 +117,19 @@ class Objective(BaseObjective):
     # --- forecasting ---------------------------------------------------
 
     def _eval_forecasting(self, model):
+        from benchmark_utils.capabilities import mask_covariates
         from benchmark_utils.inputs import ForecastInput
 
+        # Mask the covariate payload down to what this model declares it can
+        # use and has enabled. A model that consumes no covariates (the
+        # default) thus runs univariate; toggling a capability off here is
+        # what makes its lift measurable. Targets are never masked.
+        active = getattr(model, "covariate_capabilities", frozenset())
         forecast = model.predict(
             ForecastInput(
                 x=self.X_test,
                 cutoff_indexes=self.cutoff_indexes,
-                covariates=self.covariates,
+                covariates=mask_covariates(self.covariates, active),
             )
         ).flatten()  # canonical (M, Q, H, C) shape for metrics
 
