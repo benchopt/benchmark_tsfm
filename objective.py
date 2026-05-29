@@ -124,14 +124,27 @@ class Objective(BaseObjective):
 
     def _eval_forecasting(self, model):
         from benchmark_utils.inputs import ForecastInput
+        from benchmark_utils.leakage import detect_forecast_leakage
 
-        forecast = model.predict(
-            ForecastInput(
-                x=self.X_test,
-                cutoff_indexes=self.cutoff_indexes,
-                covariates=self.covariates,
-            )
-        ).flatten()  # canonical (M, Q, H, C) shape for metrics
+        forecast_input = ForecastInput(
+            x=self.X_test,
+            cutoff_indexes=self.cutoff_indexes,
+            covariates=self.covariates,
+        )
+
+        # Disqualify models that peek at the future target. A leakage-free
+        # forecaster's output is invariant to changes beyond each cutoff;
+        # any sensitivity to the future means the reported metrics would be
+        # invalid, so we surface ``leakage=1`` and set every metric to +inf
+        # (the worst value, since benchopt minimises).
+        report = detect_forecast_leakage(model, forecast_input)
+        if report.leaked:
+            return {name: float("inf") for name in self.metrics} | {
+                "value": float("inf"),
+                "leakage": 1.0,
+            }
+
+        forecast = model.predict(forecast_input).flatten()  # (M, Q, H, C)
 
         # Concatenate per-series targets into a single (M, H, C) array, in the
         # same order the flattened forecast iterates (series-major, cutoff-minor).
@@ -144,10 +157,12 @@ class Objective(BaseObjective):
             seasonality=self.meta.get("seasonality", 1),
             alpha=self.meta.get("mcis_alpha", 0.05),
         )
-        return {
+        result = {
             name: ALL_METRICS[name](y_true, forecast, **kwargs)
             for name in self.metrics
         }
+        result["leakage"] = 0.0
+        return result
 
     # --- classification ------------------------------------------------
 
