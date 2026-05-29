@@ -274,3 +274,167 @@ class ChronosEventAdapter(BaseTSFMAdapter):
         pos = torch.sigmoid(pos_logits[0]).cpu().numpy()  # (N, 2)
         cls = torch.sigmoid(cls_logits[0]).cpu().numpy()  # (N, k)
         return np.concatenate([pos, cls], axis=-1).astype(np.float32)  # (N, 2+k)
+
+
+# ---------------------------------------------------------------------------
+# Training helpers (used by solvers/chronos.py)
+# ---------------------------------------------------------------------------
+
+def _get_linear_cosine_scheduler(optimizer, warmup_epochs, total_epochs):
+    """Linear warmup + cosine annealing LR scheduler (epoch-level)."""
+    import math
+
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return float(epoch + 1) / float(max(1, warmup_epochs))
+        progress = float(epoch - warmup_epochs) / float(
+            max(1, total_epochs - warmup_epochs)
+        )
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
+def precompute_embeddings(pipeline, X_train):
+    """Embed every training series via a frozen Chronos pipeline.
+
+    Each series is embedded channel-by-channel and the per-channel
+    (T_tok, D) tensors are mean-pooled to produce a single (T_tok, D)
+    representation. Results are cached on CPU.
+
+    Parameters
+    ----------
+    pipeline : ChronosPipeline or Chronos2Pipeline
+        A loaded (and frozen) Chronos pipeline exposing ``.embed()``.
+    X_train : List[np.ndarray (T, C)]
+        Training time series.
+
+    Returns
+    -------
+    List[torch.Tensor]  — one (T_tok, D) float32 CPU tensor per series.
+    """
+    Z_train = []
+    with torch.no_grad():
+        for x in X_train:
+            x = np.asarray(x, dtype=np.float32)
+            C = x.shape[1]
+            channel_embs = []
+            for c in range(C):
+                ctx = torch.tensor(x[:, c], dtype=torch.float32)
+                emb, _ = pipeline.embed(ctx.unsqueeze(0))  # (1, T_tok, D)
+                channel_embs.append(emb.squeeze(0).float().cpu())
+            stacked = torch.stack(channel_embs, dim=0)  # (C, T_tok, D)
+            Z_train.append(stacked.mean(dim=0))          # (T_tok, D)
+    return Z_train
+
+
+def fit_event_head(
+    Z_train,
+    y_train,
+    n_classes,
+    d_model,
+    device,
+    batch_size=32,
+    num_epochs=100,
+    lr=3e-4,
+    weight_decay=1e-4,
+    warmup_epochs=5,
+    num_dec_layers=2,
+    lambda_cls=1.0,
+):
+    """Train an EventHead on pre-computed Chronos embeddings.
+
+    Parameters
+    ----------
+    Z_train : List[torch.Tensor (T_tok, D)]
+        Pre-computed encoder embeddings (CPU), one per training series.
+    y_train : List[np.ndarray (N, 2+k)]
+        Padded event targets, one per training series.
+    n_classes : int
+        Number of binary class columns k.
+    d_model : int
+        Encoder hidden dimension D.
+    device : str
+        Torch device, e.g. ``"cuda"`` or ``"cpu"``.
+    batch_size, num_epochs, lr, weight_decay : training hyperparameters.
+    warmup_epochs : int
+        Linear warmup duration; cosine decay thereafter.
+    num_dec_layers : int
+        Transformer decoder depth.
+    lambda_cls : float
+        Weight of the classification loss relative to the position loss.
+
+    Returns
+    -------
+    EventHead  — trained, in eval mode, on ``device``.
+    """
+    head = EventHead(
+        d_model=d_model,
+        n_classes=n_classes,
+        num_queries=10,
+        num_decoder_layers=num_dec_layers,
+        nhead=8,
+    ).to(device)
+    head.train()
+
+    optimizer = torch.optim.AdamW(
+        head.parameters(), lr=lr, weight_decay=weight_decay
+    )
+    scheduler = _get_linear_cosine_scheduler(optimizer, warmup_epochs, num_epochs)
+
+    N_train = len(Z_train)
+    use_amp = device == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+    for epoch in range(num_epochs):
+        indices = np.random.permutation(N_train)
+        epoch_loss = 0.0
+        num_batches = 0
+
+        for batch_start in range(0, N_train, batch_size):
+            batch_idx = indices[batch_start: batch_start + batch_size]
+
+            embs = [Z_train[i] for i in batch_idx]
+            max_ttok = max(e.shape[0] for e in embs)
+            D = embs[0].shape[1]
+            B = len(embs)
+
+            memory = torch.zeros(B, max_ttok, D, dtype=torch.float32)
+            for bi, e in enumerate(embs):
+                memory[bi, : e.shape[0]] = e
+            memory = memory.to(device)
+
+            y_batch = torch.tensor(
+                np.stack([y_train[i] for i in batch_idx]),
+                dtype=torch.float32,
+                device=device,
+            )  # (B, N, 2+k)
+
+            optimizer.zero_grad()
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                pos_logits, cls_logits = head(memory)
+                loss = head.compute_loss(
+                    pos_logits, cls_logits, y_batch, lambda_cls=lambda_cls
+                )
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(head.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+
+        scheduler.step()
+
+        if (epoch + 1) % 10 == 0 or epoch == 0:
+            avg = epoch_loss / max(num_batches, 1)
+            lr_now = scheduler.get_last_lr()[0]
+            print(
+                f"  Epoch {epoch + 1:3d}/{num_epochs} | "
+                f"loss={avg:.4f} | lr={lr_now:.2e}"
+            )
+
+    head.eval()
+    return head
