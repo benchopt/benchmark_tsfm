@@ -243,8 +243,6 @@ class Solver(BaseTSFMSolver):
 
     requirements = ["pip::chronos-forecasting>=2.2", "pip::torch"]
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "model_size": ["small"],
         "layer": [None],

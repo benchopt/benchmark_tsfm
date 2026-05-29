@@ -92,8 +92,6 @@ class Solver(BaseSolver):
     # No extra requirements beyond the objective's scikit-learn + aeon.
     requirements = []
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "seasonality": [1],
     }

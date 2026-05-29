@@ -166,8 +166,6 @@ class Solver(BaseSolver):
 
     requirements = ["pip::chronos-forecasting>=2.2,<3"]
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "model_size": ["small"],
         "layer": [None],

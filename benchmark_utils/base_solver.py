@@ -65,8 +65,6 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
-    sampling_strategy = "run_once"
-
     def __init__(self, **kwargs: Any) -> None:
         """Initialize solver with model-specific setup.
 

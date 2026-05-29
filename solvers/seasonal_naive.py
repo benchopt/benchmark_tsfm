@@ -62,8 +62,6 @@ class Solver(BaseSolver):
 
     requirements = []
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "season_length": [1, 7, 12, 24],
     }

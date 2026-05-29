@@ -279,8 +279,6 @@ class Solver(BaseSolver):
 
     requirements = ["pip::theforecastingcompany"]
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "model": ["chronos-2"],
         "context": [None],
