@@ -173,6 +173,88 @@ def _point_adjust(y_true, y_pred):
 
 
 # ---------------------------------------------------------------------------
+# Event detection
+# ---------------------------------------------------------------------------
+
+def _iou_1d(s1, w1, s2, w2):
+    s1, w1, s2, w2 = float(s1), float(w1), float(s2), float(w2)
+    inter = max(0.0, min(s1 + w1, s2 + w2) - max(s1, s2))
+    union = w1 + w2 - inter
+    return inter / union if union > 0.0 else 0.0
+
+
+def _ap_from_tp_fp(tp, fp, n_gt):
+    """Area under the precision-recall step function."""
+    if n_gt == 0:
+        return float("nan")
+    tp_cum = np.cumsum(tp)
+    fp_cum = np.cumsum(fp)
+    recall = tp_cum / n_gt
+    precision = tp_cum / (tp_cum + fp_cum)
+    recall = np.concatenate([[0.0], recall])
+    precision = np.concatenate([[1.0], precision])
+    return float(np.sum((recall[1:] - recall[:-1]) * precision[1:]))
+
+
+def map_iou(y_true, y_pred, iou_threshold=0.5):
+    """Mean Average Precision at a 1-D IoU threshold for event detection.
+
+    Parameters
+    ----------
+    y_true : list of np.ndarray (N_gt, 2+K)
+        Ground-truth events per series.  Cols: [start_norm, width_norm, *one_hot].
+    y_pred : list of np.ndarray (N_pred, 2+K)
+        Predicted events per series.  Cols: [start_norm, width_norm, *class_scores].
+        Score for class k is y_pred[i, 2+k]; confidence = per-class score.
+    iou_threshold : float
+        Minimum IoU to count a prediction as a true positive (default 0.5).
+    """
+    if not y_true:
+        return float("nan")
+
+    n_classes = y_true[0].shape[1] - 2
+    aps = []
+
+    for k in range(n_classes):
+        # Collect GT boxes for class k, grouped by series index
+        gt_by_series = {}
+        n_gt = 0
+        for i, gt in enumerate(y_true):
+            boxes = [(row[0], row[1]) for row in gt
+                     if len(gt) > 0 and np.argmax(row[2:]) == k]
+            gt_by_series[i] = boxes
+            n_gt += len(boxes)
+
+        # Collect all predictions for class k: (series_idx, start, width, score)
+        preds = []
+        for i, pred in enumerate(y_pred):
+            for row in pred:
+                preds.append((i, row[0], row[1], float(row[2 + k])))
+        preds.sort(key=lambda x: -x[3])
+
+        matched = {i: [False] * len(gt_by_series[i]) for i in gt_by_series}
+        tp = np.zeros(len(preds))
+        fp = np.zeros(len(preds))
+
+        for j, (i, s, w, _) in enumerate(preds):
+            best_iou, best_gi = 0.0, -1
+            for gi, (gs, gw) in enumerate(gt_by_series.get(i, [])):
+                iou = _iou_1d(s, w, gs, gw)
+                if iou > best_iou:
+                    best_iou, best_gi = iou, gi
+            if best_iou >= iou_threshold and best_gi >= 0 and not matched[i][best_gi]:
+                tp[j] = 1.0
+                matched[i][best_gi] = True
+            else:
+                fp[j] = 1.0
+
+        aps.append(_ap_from_tp_fp(tp, fp, n_gt))
+
+    valid = [ap for ap in aps if not np.isnan(ap)]
+    return float(np.mean(valid)) if valid else float("nan")
+
+
+# ---------------------------------------------------------------------------
 # Registry: maps metric name → function
 # ---------------------------------------------------------------------------
 
@@ -196,4 +278,9 @@ AD_METRICS = {
     "f1_pa": f1_pa,
 }
 
-ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS}
+EVENT_METRICS = {
+    "map_iou": map_iou,
+}
+
+ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS,
+               **EVENT_METRICS}

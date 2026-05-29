@@ -3,6 +3,8 @@
 /outputs/
 /data/
 **/build/
+physionet*
+venv*
 
 # Cache directory
 **/__cache__

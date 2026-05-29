@@ -1,28 +1,23 @@
-"""Chronos solver for the TSFM benchmark.
+"""Chronos solver for the TSFM benchmark (local inference).
 
 Supports:
   - forecasting     : zero-shot via ChronosPipeline
   - classification  : linear probe on pooled encoder embeddings
+  - anomaly_detection  : forecast-residual on top of the same forecaster
 
 Anomaly detection is currently broken and skipped.
 
-Model loading is done in ``set_objective`` (untimed).
-Adaptation fitting is done in ``run`` (timed).
-
-Adding a new task
------------------
-1. Add the task name to ``SUPPORTED_TASKS``.
-2. In ``run``, instantiate the appropriate adapter from
-   ``benchmark_utils.adapters`` (or implement a new one there).
-
-References:
-    https://github.com/amazon-science/chronos-forecasting
+Model loading is done in ``set_objective`` (untimed). Inference batches
+every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
+call — the pipeline accepts a list of variable-length tensors and
+applies left-padding internally, so all the per-cutoff work happens in
+one forward pass.
 """
 
 import numpy as np
 import torch
 from benchopt import BaseSolver
-from chronos import Chronos2Pipeline, ChronosPipeline
+from chronos import ChronosPipeline
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -32,8 +27,12 @@ from benchmark_utils.adapters import (
     MeanPooler,
     UnpooledEncoder,
 )
+from benchmark_utils.adapters.base import BaseTSFMAdapter
+from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
 
-SUPPORTED_TASKS = {"forecasting", "classification"}
+SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
 
 POOLERS = {
     "mean": MeanPooler,
@@ -42,31 +41,50 @@ POOLERS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Thin wrapper exposing the predict() interface expected by the objective
-# ---------------------------------------------------------------------------
-
-
-class _ChronosForecaster:
-    """Wraps ChronosPipeline to expose predict(x (T, C)) -> (H, C)."""
+class _ChronosForecaster(BaseTSFMAdapter):
+    """Batched Chronos-2 adapter returning a full quantile fan."""
 
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
-        # Chronos-2 returns quantile forecasts; locate the median.
-        self._median_idx = list(pipeline.quantiles).index(0.5)
+        self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        context = _to_context(x)  # (1, V, T)
-        forecast = self.pipeline.predict(
-            context,
-            prediction_length=self.prediction_length,
+    def predict(self, x: ForecastInput) -> ForecastOutput:
+        inputs = []
+        layout = []  # (series_idx, cutoff_idx) per input element
+        per_series_shape = []  # (C, n_cutoffs) per series
+        for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
+            series = np.asarray(series, dtype=np.float32)
+            if series.ndim == 1:
+                series = series[:, None]
+            _, C = series.shape
+            per_series_shape.append((C, len(cutoffs)))
+            for cutoff_idx, cutoff in enumerate(cutoffs):
+                hist = series[:cutoff]  # (T_cutoff, C)
+                inputs.append(torch.from_numpy(hist.T))  # (C, T_cutoff)
+                layout.append((series_idx, cutoff_idx))
+
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
+
+        with torch.no_grad():
+            forecast = self.pipeline.predict(
+                inputs,
+                prediction_length=self.prediction_length,
+            )
+        # forecast: list[(n_variates, Q, prediction_length)] aligned with `inputs`.
+
+        Q = len(self.quantile_levels)
+        per_series = [
+            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            for C, n_cutoffs in per_series_shape
+        ]
+        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
+            arr = pred.float().cpu().numpy()  # (C, Q, H)
+            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=self.quantile_levels
         )
-        # forecast is a list of length B; each entry has shape (V, Q, H).
-        # Take the median quantile and cast to float32 (bfloat16 tensors
-        # can't be converted to numpy).
-        out = forecast[0].float().cpu().numpy()  # (V, Q, H)
-        return out[:, self._median_idx, :].T  # (H, V)
 
 
 def _to_context(x):
@@ -180,7 +198,7 @@ def ChronosEncoder(
 
 
 class Solver(BaseSolver):
-    """Chronos zero-shot solver.
+    """Chronos-2 zero-shot solver.
 
     Parameters
     ----------
@@ -191,11 +209,15 @@ class Solver(BaseSolver):
         ``ChronosPipeline.embed`` (post-final-norm).
     pooler : {"mean", "max", "last"}
         Pooling strategy over the time-token axis for classification.
+    task_adaptation : str
+        Per-task usage of the forecaster:
+          ``"zeroshot"``          — direct forecasting (forecasting only)
+          ``"forecast_residual"`` — anomaly score = forecast error (AD only)
     """
 
     name = "Chronos"
 
-    requirements = ["pip::chronos-forecasting>=1.4", "pip::torch"]
+    requirements = ["pip::chronos-forecasting>=2.2,<3"]
 
     sampling_strategy = "run_once"
 
@@ -210,18 +232,16 @@ class Solver(BaseSolver):
             return True, f"Chronos solver does not support task={task!r}"
         return False, None
 
-    # ------------------------------------------------------------------
-
     def set_objective(self, X_train, y_train, task, **meta):
+        from chronos import Chronos2Pipeline
 
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
         self.meta = meta
 
-        # Load model once; reuse across consecutive dataset configs.
-        # bfloat16 is fine on GPU but poorly supported on CPU — fall back
-        # to float32 there so inference doesn't crash or stall.
+        # bfloat16 is fine on CUDA but poorly supported on CPU / MPS;
+        # fall back to float32 there so inference doesn't crash or stall.
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
         model_id = f"autogluon/chronos-2-{self.model_size}"
@@ -234,8 +254,8 @@ class Solver(BaseSolver):
             self._loaded_model = model_id
 
     def run(self, _):
+        pred_len = self.meta.get("prediction_length", 1)
         if self.task == "forecasting":
-            pred_len = self.meta.get("prediction_length", 1)
             self._adapter = _ChronosForecaster(self._pipeline, pred_len)
 
         elif self.task == "classification":
@@ -245,6 +265,15 @@ class Solver(BaseSolver):
                 encoder,
                 task="classification",
                 n_classes=self.meta.get("n_classes"),
+            )
+            adapter.fit(self.X_train, self.y_train)
+            self._adapter = adapter
+
+        elif self.task == "anomaly_detection":
+            # AD uses one-step-ahead forecasts.
+            self._adapter = ForecastResidualAdapter(
+                _ChronosForecaster(self._pipeline, prediction_length=1),
+                prediction_length=1,
             )
             adapter.fit(self.X_train, self.y_train)
             self._adapter = adapter
