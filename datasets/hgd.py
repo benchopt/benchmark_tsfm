@@ -116,7 +116,7 @@ class Dataset(BaseDataset):
 
     name = "HGD"
 
-    requirements = ["pip::moabb", "pandas", "braindecode==1.5.1"]
+    requirements = ["pip::moabb", "pip::pandas", "pip::braindecode"]
 
     parameters = {
         "seed":                [42],
@@ -126,7 +126,6 @@ class Dataset(BaseDataset):
         "factor":              [1e6],   # V → µV
         "window_size_samples": [1000],  # 4 s at 250 Hz
         "debug":               [True],
-        "sub_id": [list(range(1, 15))],  # 14 subjects
     }
 
     def get_data(self):

@@ -19,7 +19,7 @@ class Dataset(BaseDataset):
     name = "BNCI2014_001"
 
     requirements = [
-        'braindecode==1.5.1', 'moabb==1.5.0',
+        'pip::braindecode', 'pip::moabb',
     ]
 
     parameters = {

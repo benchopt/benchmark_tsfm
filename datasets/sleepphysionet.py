@@ -88,9 +88,9 @@ class Dataset(BaseDataset):
         Fraction of each recording used as the training (normal) portion.
     """
 
-    name = "Sleep"
+    name = "SleepPhysionet"
 
-    requirements = ["pip::pooch", "pandas", 'braindecode==1.5.1']
+    requirements = ["pip::pooch", "pip::pandas", "pip::braindecode"]
 
     parameters = {
         "seed": [42],
