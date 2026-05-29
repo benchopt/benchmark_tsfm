@@ -38,6 +38,7 @@ POOLERS = {
 # Thin wrapper exposing the predict() interface expected by the objective
 # ---------------------------------------------------------------------------
 
+
 class _Toto2Forecaster(BaseTSFMAdapter):
     """Toto2Model adapter for the forecasting contract."""
 
@@ -64,7 +65,7 @@ class _Toto2Forecaster(BaseTSFMAdapter):
 
         x = np.asarray(context, dtype=np.float32)
         if self.context_length is not None:
-            x = x[-self.context_length:]
+            x = x[-self.context_length :]
 
         # Toto expects (batch, n_variates, time_steps).
         target_np = np.swapaxes(x, 0, 1)[None, :, :]
@@ -89,9 +90,7 @@ class _Toto2Forecaster(BaseTSFMAdapter):
         has_missing_values = not bool(finite_mask_np.all())
 
         target = torch.from_numpy(target_np).to(self.device)
-        target_mask = torch.from_numpy(finite_mask_np).to(
-            self.device, dtype=torch.bool
-        )
+        target_mask = torch.from_numpy(finite_mask_np).to(self.device, dtype=torch.bool)
         series_ids = torch.zeros(
             target.shape[0],
             target.shape[1],
@@ -172,7 +171,7 @@ class _Toto2EmbedEncoder(UnpooledEncoder):
             )
 
         if self.context_length is not None:
-            x = x[:, -self.context_length:, :]
+            x = x[:, -self.context_length :, :]
 
         # Toto expects (batch, variates, time_steps).
         batch = x.transpose(0, 2, 1)
@@ -202,9 +201,7 @@ class _Toto2EmbedEncoder(UnpooledEncoder):
         target_np, target_mask_np = self._prepare_batch(X)
 
         target = torch.from_numpy(target_np).to(self.device)
-        target_mask = torch.from_numpy(target_mask_np).to(
-            self.device, dtype=torch.bool
-        )
+        target_mask = torch.from_numpy(target_mask_np).to(self.device, dtype=torch.bool)
         cpm_mask = torch.ones_like(target_mask)
         series_ids = torch.zeros(
             target.shape[0],
@@ -255,6 +252,7 @@ class _Toto2EmbedEncoder(UnpooledEncoder):
 # Solver
 # ---------------------------------------------------------------------------
 
+
 class Solver(BaseSolver):
     """Datadog Toto-2.0 zero-shot solver."""
 
@@ -274,6 +272,11 @@ class Solver(BaseSolver):
         "patch_size": [32],
         "layer": [None],
         "pooler": ["mean"],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
@@ -290,12 +293,9 @@ class Solver(BaseSolver):
         self.y_train = y_train
         self.meta = meta
 
-        self._device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         should_reload = (
-            not hasattr(self, "_model")
-            or self._loaded_checkpoint != self.checkpoint
+            not hasattr(self, "_model") or self._loaded_checkpoint != self.checkpoint
         )
         if should_reload:
             self._model = Toto2Model.from_pretrained(self.checkpoint)
@@ -333,9 +333,7 @@ class Solver(BaseSolver):
             self._adapter = adapter
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(
-                forecaster, prediction_length=1
-            )
+            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
 
     def get_result(self):
         return {"model": self._adapter}

@@ -129,7 +129,7 @@ class Dataset(BaseDataset):
         "high_cut_hz":         [40.0],
         "factor":              [1e6],   # V → µV
         "window_size_samples": [1000],  # 4 s at 250 Hz
-        "debug":               [True],
+        "debug":               [False],
     }
 
     def get_data(self):
