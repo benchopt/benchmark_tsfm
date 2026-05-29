@@ -101,19 +101,25 @@ GIFT_EVAL_TERM_MULTIPLIER: dict[str, int] = {
 def gift_eval_prediction_length(freq: str, term: str) -> int:
     """Resolve the GIFT-Eval prediction length for a (freq, term) pair.
 
-    ``freq`` is a pandas-style alias (e.g. ``"5T"``, ``"W-SUN"``). If the
-    exact alias isn't in :data:`GIFT_EVAL_PRED_LENGTH_MAP`, multi-minute
-    aliases collapse to ``"T"``; otherwise we default to 48.
-
-    ``term`` must be one of ``"short"``, ``"medium"``, ``"long"``.
+    ``freq`` is a pandas-style alias (e.g. ``"5T"``, ``"1H"``, ``"W-SUN"``).
+    Lookup falls back through: exact match → strip leading "1" multiplier
+    ("1H" → "H") → collapse any multi-X alias to its base X ("10S" → "S",
+    "30T" → "T") → default 48. ``term`` must be one of ``"short"``,
+    ``"medium"``, ``"long"``.
     """
     if term not in GIFT_EVAL_TERM_MULTIPLIER:
         raise ValueError(
             f"term must be one of {list(GIFT_EVAL_TERM_MULTIPLIER)}; got {term!r}"
         )
     base = GIFT_EVAL_PRED_LENGTH_MAP.get(freq)
-    if base is None and freq.endswith("T") and freq != "T":
-        base = GIFT_EVAL_PRED_LENGTH_MAP["T"]
+    if base is None:
+        m = _PANDAS_ALIAS_RE.match(freq.split("-", 1)[0])
+        if m:
+            head = m.group(1)
+            # Normalize new pandas spellings ("QE"→"Q", "ME"→"M", ...)
+            # before falling back through the map.
+            head = _NORMALIZE_BASE.get(head, head)
+            base = GIFT_EVAL_PRED_LENGTH_MAP.get(head)
     if base is None:
         base = 48
     return base * GIFT_EVAL_TERM_MULTIPLIER[term]

@@ -4,10 +4,12 @@ The HF repo organizes data per-dataset under top-level directories
 (``m4_weekly``, ``etth1``, ``solar``, ...). Each directory holds a
 single Arrow file with the test-set series.
 
-Each entry exposes ``item_id``, ``start``, ``freq``, and ``target``
-(a flat list of floats). For multivariate datasets, ``target`` is still
-serialized as a flat list — GIFT-Eval handles those via separate file
-layouts we don't unpack here; the MVP supports univariate only.
+Each entry exposes ``item_id``, ``start``, ``freq``, and ``target``.
+``target`` is a flat ``List[float]`` for univariate configs and a
+``List[List[float]]`` of shape ``(C, T)`` for multivariate ones (e.g.
+``bitbrains_*``, ``electricity/*``, ``ett1/*``, ``ett2/*``,
+``jena_weather/*``, ``solar/*``). Both shapes are handled — multivariate
+entries are transposed to the ``(T, C)`` repo contract.
 
 Cutoffs and windows follow the Monash recipe (we don't comply with
 GIFT-Eval's prescribed test cutoff — same rolling-window logic via
@@ -25,6 +27,43 @@ from benchmark_utils.constants import (
     gift_eval_prediction_length,
 )
 from benchmark_utils.windowing import make_forecasting_splits
+
+
+# Canonical list of GIFT-Eval evaluation configs. Each entry is the
+# arrow-containing directory path inside the HF repo. Flat datasets are
+# bare names (``m4_weekly``); datasets that ship multiple frequencies
+# are encoded as ``<name>/<freq>`` (e.g. ``LOOP_SEATTLE/H``,
+# ``LOOP_SEATTLE/D`` — these are genuinely distinct evaluations).
+# Surfaced via ``get_parameter_choices`` so that ``dataset_name=all``
+# and ``benchopt info -v`` work.
+GIFTEVAL_DATASETS: tuple[str, ...] = (
+    "LOOP_SEATTLE/5T", "LOOP_SEATTLE/D", "LOOP_SEATTLE/H",
+    "M_DENSE/D", "M_DENSE/H",
+    "SZ_TAXI/15T", "SZ_TAXI/H",
+    "bitbrains_fast_storage/5T", "bitbrains_fast_storage/H",
+    "bitbrains_rnd/5T", "bitbrains_rnd/H",
+    "bizitobs_application",
+    "bizitobs_l2c/5T", "bizitobs_l2c/H",
+    "bizitobs_service",
+    "car_parts_with_missing", "covid_deaths",
+    "electricity/15T", "electricity/D", "electricity/H", "electricity/W",
+    "ett1/15T", "ett1/D", "ett1/H", "ett1/W",
+    "ett2/15T", "ett2/D", "ett2/H", "ett2/W",
+    "hierarchical_sales/D", "hierarchical_sales/W",
+    "hospital",
+    "jena_weather",
+    "jena_weather/10T", "jena_weather/D", "jena_weather/H",
+    "kdd_cup_2018_with_missing/D", "kdd_cup_2018_with_missing/H",
+    "m4_daily", "m4_hourly", "m4_monthly", "m4_quarterly",
+    "m4_weekly", "m4_yearly",
+    "restaurant",
+    "saugeenday/D", "saugeenday/M", "saugeenday/W",
+    "solar/10T", "solar/D", "solar/H", "solar/W",
+    "temperature_rain_with_missing",
+    "us_births/D", "us_births/M", "us_births/W",
+)
+
+GIFTEVAL_TERMS: tuple[str, ...] = ("short", "medium", "long")
 
 
 class Dataset(BaseDataset):
@@ -65,24 +104,38 @@ class Dataset(BaseDataset):
         "debug": [False],
     }
 
+    @classmethod
+    def get_all_parameter_values(cls, name):
+        if name == "dataset_name":
+            return list(GIFTEVAL_DATASETS)
+        if name == "term":
+            return list(GIFTEVAL_TERMS)
+        return None
+
     def get_data(self):
         from datasets import Dataset as HFDataset
         from huggingface_hub import hf_hub_download, list_repo_files
 
-        # Locate the Arrow file inside the requested subdirectory.
+        # Locate the Arrow file inside the requested directory. Match the
+        # exact directory (no nested descent) — for datasets like
+        # ``LOOP_SEATTLE`` that ship multiple freq subdirs, the user must
+        # pick one (``LOOP_SEATTLE/H``, ``LOOP_SEATTLE/D``, ...), and
+        # those are genuinely separate evaluation configs.
         files = list_repo_files(
             "Salesforce/GiftEval", repo_type="dataset"
         )
+        prefix = f"{self.dataset_name}/"
         arrow_files = [
             f for f in files
-            if f.startswith(f"{self.dataset_name}/")
+            if f.startswith(prefix)
             and f.endswith(".arrow")
+            and "/" not in f[len(prefix):]
         ]
         if not arrow_files:
             raise ValueError(
                 f"No Arrow file found for GIFT-Eval dataset "
-                f"{self.dataset_name!r}. Available top-level dirs: "
-                f"{sorted({f.split('/')[0] for f in files if '/' in f})}"
+                f"{self.dataset_name!r}. Valid choices are in "
+                f"GIFTEVAL_DATASETS."
             )
 
         # Download + load each shard; concatenate.
@@ -113,19 +166,24 @@ class Dataset(BaseDataset):
         if pred_len is None:
             pred_len = gift_eval_prediction_length(pandas_freq, self.term)
 
-        # Build (T, C) series. Univariate only in the MVP.
+        # Build (T, C) series. Univariate entries arrive as flat
+        # ``List[float]`` (ndim=1); multivariate entries arrive as
+        # ``List[List[float]]`` of shape ``(C, T)``.
         series_list = []
         for r in rows:
             values = np.asarray(r["target"], dtype=np.float32)
-            if values.ndim != 1:
-                # Skip multivariate entries until we add explicit handling.
+            if values.ndim == 1:
+                series = values.reshape(-1, 1)        # (T, 1)
+            elif values.ndim == 2:
+                series = values.T                       # (C, T) → (T, C)
+            else:
                 continue
-            series_list.append(values.reshape(-1, 1))
+            series_list.append(series)
 
         if not series_list:
             raise ValueError(
                 f"All entries in GIFT-Eval dataset {self.dataset_name!r} "
-                "were skipped (multivariate not yet supported)."
+                "had unsupported target shapes."
             )
 
         # Training portion: everything except the last test windows.
