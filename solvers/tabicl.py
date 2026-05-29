@@ -91,11 +91,12 @@ class Solver(BaseSolver):
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Reinstantiate only when the checkpoint version changes.
+        # Reinstantiate when the checkpoint version or n_estimators changes.
+        current_key = (self.checkpoint_version, self.n_estimators)
         should_reload = (
             not hasattr(self, "_classifier")
-            or not hasattr(self, "_loaded_checkpoint_version")
-            or self._loaded_checkpoint_version != self.checkpoint_version
+            or not hasattr(self, "_loaded_key")
+            or self._loaded_key != current_key
         )
         if should_reload:
             try:
@@ -106,7 +107,7 @@ class Solver(BaseSolver):
                     random_state=42,
                     verbose=False,
                 )
-                self._loaded_checkpoint_version = self.checkpoint_version
+                self._loaded_key = current_key
                 print(
                     f"\u2713 TabICL checkpoint ready: {self.checkpoint_version} "
                     f"on device: {device}"
