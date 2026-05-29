@@ -70,10 +70,16 @@ class _MomentForecaster(BaseTSFMAdapter):
                 hist_tensor = torch.from_numpy(hist.transpose(1, 0)).unsqueeze(0).float()
                 device = next(self.pipeline.parameters()).device
                 hist_tensor = hist_tensor.to(device)
+                input_mask = torch.ones(
+                    (hist_tensor.shape[0], hist_tensor.shape[2]),
+                    dtype=torch.float32,
+                    device=device,
+                )
 
                 with torch.no_grad():
                     outputs = self.pipeline.forecast(
                         x_enc=hist_tensor,
+                        input_mask=input_mask,
                         prediction_length=self.prediction_length,
                     )
 
@@ -81,12 +87,24 @@ class _MomentForecaster(BaseTSFMAdapter):
                 if isinstance(forecast, tuple):
                     forecast = forecast[0]
 
-                forecast = forecast.squeeze(0).cpu().numpy()  # (prediction_length, C)
+                arr = forecast.squeeze(0).cpu().numpy()
 
-                if forecast.ndim == 1:
-                    forecast = forecast[:, None]  # Ensure (prediction_length, C)
+                if arr.ndim == 1:
+                    arr = arr[:, None]
 
-                preds_per_series.append(forecast)
+                # Moment returns (channels, horizon) by default.
+                if arr.ndim == 2 and arr.shape[0] != self.prediction_length:
+                    arr = arr.T
+
+                if arr.shape[0] > self.prediction_length:
+                    arr = arr[: self.prediction_length]
+
+                if arr.shape[0] != self.prediction_length:
+                    raise ValueError(
+                        f"Unexpected forecast shape after transpose/slice: {arr.shape}"
+                    )
+
+                preds_per_series.append(arr)
             
             # Stack predictions: (n_cutoffs, prediction_length, C)
             stacked = np.stack(preds_per_series, axis=0)
