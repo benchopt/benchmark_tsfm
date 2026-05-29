@@ -38,8 +38,8 @@ from scipy.stats import friedmanchisquare, rankdata, studentized_range
 
 from benchopt import BasePlot
 
-sys.path.insert(0, str(Path(__file__).parent))
-from elo import HIGHER_IS_BETTER  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from benchmark_utils.metrics import is_higher_better  # noqa: E402
 
 
 def short_solver(name: str) -> str:
@@ -113,7 +113,7 @@ def prepare_matrix(df: pd.DataFrame, metric: str, top_k: int | None = None,
         # Keep the k solvers with the best mean rank.
         # For higher-is-better metrics use nlargest; lower-is-better nsmallest.
         means = complete.mean(axis=1)
-        if metric in HIGHER_IS_BETTER:
+        if is_higher_better(metric):
             keep = means.nlargest(top_k).index
         else:
             keep = means.nsmallest(top_k).index
@@ -129,7 +129,7 @@ GLOBAL_KEY = "global"
 def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
     """Render the global CD diagram across every numeric ``objective_*`` metric.
 
-    For each metric we build per-dataset ranks (respecting HIGHER_IS_BETTER),
+    For each metric we build per-dataset ranks (respecting is_higher_better),
     intersect the solver set across metrics, then concatenate the (k × N_metric)
     rank matrices along axis 1. Each (metric, dataset) pair becomes one
     Friedman "block" of size k. Mean rank per solver, Nemenyi pairwise p-values,
@@ -152,7 +152,7 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
         if mat.shape[0] < 2 or mat.shape[1] < 1:
             continue
         # Higher-is-better → negate so rank 1 == best in both regimes
-        rank_input = -mat if metric in HIGHER_IS_BETTER else mat
+        rank_input = -mat if is_higher_better(metric) else mat
         ranks_arr = np.vstack([
             rankdata(rank_input[c].values, method="average")
             for c in rank_input.columns
@@ -265,7 +265,7 @@ def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
 
     # Rank within each dataset.
     # For higher-is-better metrics, negate so rank 1 = highest value.
-    rank_mat = -mat if metric in HIGHER_IS_BETTER else mat
+    rank_mat = -mat if is_higher_better(metric) else mat
     ranks_arr = np.vstack([rankdata(rank_mat[c].values, method="average")
                            for c in rank_mat.columns]).T
     ranks_df = pd.DataFrame(ranks_arr, index=mat.index, columns=mat.columns)

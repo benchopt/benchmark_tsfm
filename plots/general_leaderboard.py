@@ -18,7 +18,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from elo import (  # noqa: E402
     _elo_table, _short, ANCHOR_PREFERENCES,
-    ELO_ANCHOR, N_BOOTSTRAP,
+    ELO_ANCHOR, N_BOOTSTRAP, is_higher_better,
 )
 
 import numpy as np
@@ -27,26 +27,27 @@ import pandas as pd
 from benchopt import BasePlot
 
 
-# Task-aware metric config: (column, lower_is_better)
-_TASK_METRICS: dict[str, tuple[str, bool]] = {
-    "forecasting":       ("objective_wql",               True),
-    "classification":    ("objective_balanced_accuracy",  False),
-    "anomaly_detection": ("objective_auc_pr",             False),
+# Task → results column used for that task's Elo and metric cell. Direction
+# comes from is_higher_better — never hardcoded here.
+_TASK_METRICS: dict[str, str] = {
+    "forecasting":       "objective_wql",
+    "classification":    "objective_balanced_accuracy",
+    "anomaly_detection": "objective_auc_pr",
+}
+
+# Task → human-readable column header label.
+_TASK_LABELS: dict[str, str] = {
+    "forecasting":       "rWQL",
+    "classification":    "Bal. Acc",
+    "anomaly_detection": "AUC-PR",
 }
 
 _LOW_COLOUR  = "#ca8a04"
 _HIGH_COLOUR = "#16a34a"
 
-# Human-readable label and display direction for each task metric
-_TASK_META: dict[str, tuple[str, str]] = {
-    "forecasting":       ("rWQL",         "↓"),
-    "classification":    ("Bal. Acc",     "↑"),
-    "anomaly_detection": ("AUC-PR",       "↑"),
-}
 
-
-def _metric_cell(mean_val: float, lower_is_better: bool) -> str:
-    """Format a mean metric value with its direction arrow."""
+def _metric_cell(mean_val: float) -> str:
+    """Format a mean metric value for a table cell."""
     return f'<div style="font-weight:500">{mean_val:.4f}</div>'
 
 
@@ -68,17 +69,18 @@ def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
     records: dict[str, dict[str, float]] = {}
     for dataset_name, grp in df.groupby("dataset_name"):
         candidates = []
-        for _, (col, lower_is_better) in _TASK_METRICS.items():
+        for col in _TASK_METRICS.values():
             if col in grp.columns and grp[col].notna().any():
-                candidates.append((col, lower_is_better))
+                candidates.append(col)
         if len(candidates) != 1:
             continue
-        col, lower_is_better = candidates[0]
+        col = candidates[0]
         rows = grp[["solver_name", col]].dropna(subset=[col])
         if rows["solver_name"].duplicated().any() or len(rows) < 2:
             continue
         values = dict(zip(rows["solver_name"], rows[col]))
-        if not lower_is_better:
+        # Elo treats lower as better, so flip higher-is-better metrics.
+        if is_higher_better(col):
             values = {s: -v for s, v in values.items()}
         records[str(dataset_name)] = values
     if not records:
@@ -166,7 +168,7 @@ class Plot(BasePlot):
 
         # Mean metric values per solver per task
         mean_metrics: dict[str, dict[str, float]] = {}
-        for task, (col, _lower) in _TASK_METRICS.items():
+        for task, col in _TASK_METRICS.items():
             if col not in df.columns:
                 mean_metrics[task] = {}
             elif task == "forecasting":
@@ -179,19 +181,20 @@ class Plot(BasePlot):
             solver = row.solver
             global_cell = _elo_cell(row.elo, row.ci_low, row.ci_high)
             metric_cells = []
-            for task, (col, lower_is_better) in _TASK_METRICS.items():
+            for task in _TASK_METRICS:
                 mean_val = mean_metrics[task].get(solver)
                 if mean_val is None:
                     metric_cells.append("—")
                 else:
-                    metric_cells.append(_metric_cell(mean_val, lower_is_better))
+                    metric_cells.append(_metric_cell(mean_val))
             rows.append([str(rank), solver, global_cell] + metric_cells)
 
         return rows
 
     def get_metadata(self, df):
         columns = ["Rank", "Solver", "Global Elo"] + [
-            f"{label} {arrow}" for label, arrow in _TASK_META.values()
+            f"{_TASK_LABELS[task]} {'↑' if is_higher_better(col) else '↓'}"
+            for task, col in _TASK_METRICS.items()
         ]
         return {
             "title": (

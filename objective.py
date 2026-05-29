@@ -37,7 +37,11 @@ is a fitted :class:`~benchmark_utils.adapters.base.BaseTSFMAdapter` with a
 import numpy as np
 from benchopt import BaseObjective
 
-from benchmark_utils.metrics import ALL_METRICS
+from benchmark_utils.metrics import (  # noqa: F401  (re-exported)
+    ALL_METRICS,
+    HIGHER_IS_BETTER,
+    is_higher_better,
+)
 
 
 class Objective(BaseObjective):

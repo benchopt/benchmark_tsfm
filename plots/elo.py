@@ -24,7 +24,9 @@ in the sidebar.
 from __future__ import annotations
 
 import math
+import os
 import re
+import sys
 
 import numpy as np
 import pandas as pd
@@ -32,6 +34,12 @@ from scipy.optimize import minimize
 from scipy.special import expit, log_expit
 
 from benchopt import BasePlot
+
+# Make the repo root importable so ``benchmark_utils`` resolves whether elo.py
+# is loaded by benchopt (root already on sys.path) or imported by a sibling
+# plot run standalone (only plots/ on sys.path).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from benchmark_utils.metrics import is_higher_better  # noqa: E402
 
 
 # Chess / Chatbot Arena / TabArena convention: 400-Elo gap = 91% win rate
@@ -47,16 +55,6 @@ EPS = 1e-9
 # the same reason: a fixed, well-understood reference makes the Elo gap
 # interpretable across metrics and across re-runs.
 ANCHOR_PREFERENCES = ("seasonal naive", "seasonal_naive", "naive")
-
-# Metrics where a higher value is better. All others are assumed lower-is-better.
-HIGHER_IS_BETTER = frozenset({
-    "objective_balanced_accuracy",
-    "objective_accuracy",
-    "objective_f1_weighted",
-    "objective_auc_roc",
-    "objective_auc_pr",
-    "objective_f1_pa",
-})
 
 
 def _short(name: str) -> str:
@@ -198,9 +196,11 @@ class Plot(BasePlot):
 
     Direction
     ---------
-    Assumes lower-is-better metrics (FEV's SQL/MASE/WAPE/WQL/error fit, as do
-    most forecasting losses). For higher-is-better metrics, negate the column
-    upstream (e.g., store ``1 − roc_auc`` rather than ``roc_auc``).
+    Per-metric direction comes from ``benchmark_utils.metrics.is_higher_better``
+    (the single source of truth, re-exported by the objective). Lower-is-better
+    metrics (FEV's SQL/MASE/WAPE/WQL and most forecasting losses) are used as-is;
+    higher-is-better metrics (accuracy, AUC, F1, …) are negated before the
+    pairwise tally so that the win logic stays lower-is-better throughout.
     """
 
     name = "Elo"
@@ -218,7 +218,7 @@ class Plot(BasePlot):
         )
         # For higher-is-better metrics, negate so that _pairwise_wins
         # (which treats lower as better) computes wins correctly.
-        if objective_column in HIGHER_IS_BETTER:
+        if is_higher_better(objective_column):
             pivot = -pivot
 
         # Strict clean: drop datasets where any solver is NaN (Elo needs
@@ -264,7 +264,7 @@ class Plot(BasePlot):
             anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"
         else:
             anchor_desc = f"mean Elo = {ELO_ANCHOR:.0f}"
-        direction = "higher better" if objective_column in HIGHER_IS_BETTER else "lower better"
+        direction = "higher better" if is_higher_better(objective_column) else "lower better"
         return {
             "title": (
                 f"Elo leaderboard — {objective_column} "
