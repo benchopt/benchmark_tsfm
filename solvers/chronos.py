@@ -1,21 +1,22 @@
 """Chronos solver for the TSFM benchmark (local inference).
 
 Supports:
-  - forecasting     : zero-shot via ChronosPipeline
+  - forecasting     : zero-shot via Chronos2Pipeline
   - classification  : linear probe on pooled encoder embeddings
   - anomaly_detection  : forecast-residual on top of the same forecaster
 
 Model loading is done in ``set_objective`` (untimed). Inference batches
-every (series, cutoff) pair into a single ``ChronosPipeline.predict``
-call — the pipeline accepts a list of variable-length tensors and
-applies left-padding internally, so all the per-cutoff work happens in
-one forward pass.
+every (series, cutoff) pair into a single call — the pipeline accepts a
+list of variable-length tensors and applies left-padding internally, so
+all the per-cutoff work happens in one forward pass.
 """
+
+from typing import Sequence
 
 import numpy as np
 import torch
-from benchopt import BaseSolver
-from chronos import ChronosPipeline
+from chronos.chronos2 import Chronos2Pipeline
+from einops import rearrange
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -27,6 +28,8 @@ from benchmark_utils.adapters import (
 )
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.base_solver import BaseTSFMSolver
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
@@ -105,12 +108,12 @@ class _ChronosForecaster(BaseTSFMAdapter):
 
 
 class _ChronosEmbedEncoder(UnpooledEncoder):
-    """Default path — uses ``ChronosPipeline.embed``.
+    """Default path — uses ``Chronos2Pipeline.embed``.
 
     Returns hidden states *after* ``encoder.final_layer_norm``.
     """
 
-    def __init__(self, pipeline: ChronosPipeline):
+    def __init__(self, pipeline: Chronos2Pipeline):
         self.pipeline = pipeline
 
     def encode(self, X) -> np.ndarray:
@@ -137,7 +140,7 @@ class _ChronosHookEncoder(UnpooledEncoder):
     indices are allowed (``-1`` = last block).
     """
 
-    def __init__(self, pipeline: ChronosPipeline, layer: int):
+    def __init__(self, pipeline: Chronos2Pipeline, layer: int):
         self.pipeline = pipeline
         n_blocks = len(pipeline.model.model.encoder.block)
         if not -n_blocks <= layer < n_blocks:
@@ -181,17 +184,17 @@ class _ChronosHookEncoder(UnpooledEncoder):
 
 
 def ChronosEncoder(
-    pipeline: ChronosPipeline, layer: int | None = None
+    pipeline: Chronos2Pipeline, layer: int | None = None
 ) -> UnpooledEncoder:
     """Build a Chronos feature extractor.
 
     Parameters
     ----------
-    pipeline : ChronosPipeline
+    pipeline : Chronos2Pipeline
         A loaded Chronos pipeline.
     layer : int, optional
         Encoder block index to read hidden states from. ``None`` (default)
-        uses :meth:`ChronosPipeline.embed`, which returns post-final-norm
+        uses :meth:`Chronos2Pipeline.embed`, which returns post-final-norm
         states from the full encoder. An integer ``layer`` registers a
         forward hook on ``encoder.block[layer]`` and returns the pre-norm
         hidden state there. Negative indexing supported.
@@ -218,7 +221,7 @@ def ChronosEncoder(
 # ---------------------------------------------------------------------------
 
 
-class Solver(BaseSolver):
+class Solver(BaseTSFMSolver):
     """Chronos zero-shot solver.
 
     Parameters
@@ -227,7 +230,7 @@ class Solver(BaseSolver):
         Chronos model variant: "tiny", "mini", "small", "base", "large".
     layer : int or None
         Encoder block index for classification embeddings. ``None`` uses
-        ``ChronosPipeline.embed`` (post-final-norm).
+        ``Chronos2Pipeline.embed`` (post-final-norm).
     pooler : {"mean", "max", "last"}
         Pooling strategy over the time-token axis for classification.
     task_adaptation : str
@@ -248,37 +251,41 @@ class Solver(BaseSolver):
         "pooler": ["mean"],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"Chronos solver does not support task={task!r}"
-        return False, None
+    @property
+    def supported_tasks(self):
+        return SUPPORTED_TASKS
 
-    def set_objective(self, X_train, y_train, task, **meta):
-        self.task = task
-        self.X_train = X_train
-        self.y_train = y_train
-        self.meta = meta
-
-        # bfloat16 is fine on CUDA but poorly supported on CPU / MPS;
-        # fall back to float32 there so inference doesn't crash or stall.
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        model_id = f"amazon/chronos-t5-{self.model_size}"
-        if not hasattr(self, "_pipeline") or self._loaded_model != model_id:
-            self._pipeline = ChronosPipeline.from_pretrained(
+    def load_model(self, device, dtype):
+        """Load Chronos-2 pipeline (cached if already loaded)."""
+        model_id = f"autogluon/chronos-2-{self.model_size}"
+        if self._loaded_model != model_id:
+            self._pipeline = Chronos2Pipeline.from_pretrained(
                 model_id,
                 device_map=device,
                 dtype=dtype,
             )
             self._loaded_model = model_id
+        return self._pipeline
 
-    def run(self, _):
+    def forecast_batch(self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]) -> list[torch.Tensor]:
+        with torch.no_grad():
+            inputs_t = [x.T for x in inputs]
+            preds = self.model.predict(inputs_t, prediction_length=self.meta["prediction_length"])
+            return [
+                rearrange(pred, "n_variates n_quantiles prediction_length -> prediction_length n_variates n_quantiles")
+                for pred in preds
+            ]
+
+    def build_adapter(self, task, model):
+        # TODO later: put that code in base_solver.py
+        # and make it rely on .forecast(), .embed() and .time_embed() only, once those are all properly coded
+        """Create task-specific adapter for Chronos."""
         pred_len = self.meta.get("prediction_length", 1)
-        if self.task == "forecasting":
-            self._adapter = _ChronosForecaster(self._pipeline, pred_len)
+        if task == "forecasting":
+            return _ChronosForecaster(model, pred_len)
 
-        elif self.task == "classification":
-            base_encoder = ChronosEncoder(self._pipeline, layer=self.layer)
+        elif task == "classification":
+            base_encoder = ChronosEncoder(model, layer=self.layer)
             encoder = Encoder(base_encoder, POOLERS[self.pooler]())
             adapter = LinearProbeAdapter(
                 encoder,
@@ -286,14 +293,13 @@ class Solver(BaseSolver):
                 n_classes=self.meta.get("n_classes"),
             )
             adapter.fit(self.X_train, self.y_train)
-            self._adapter = adapter
+            return adapter
 
-        elif self.task == "anomaly_detection":
-            # AD uses one-step-ahead forecasts.
-            self._adapter = ForecastResidualAdapter(
-                _ChronosForecaster(self._pipeline, prediction_length=1),
+        elif task == "anomaly_detection":
+            return ForecastResidualAdapter(
+                _ChronosForecaster(model, prediction_length=1),
                 prediction_length=1,
             )
 
-    def get_result(self):
-        return {"model": self._adapter}
+        else:
+            raise ValueError(f"Unsupported task: {task}")

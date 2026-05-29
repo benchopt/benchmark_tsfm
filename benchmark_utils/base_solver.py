@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from benchopt import BaseSolver
 
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
@@ -188,7 +189,7 @@ class BaseTSFMSolver(BaseSolver):
         """Return the fitted adapter."""
         return {"model": self._adapter}
 
-    def forecast_batch(self, inputs: list[torch.Tensor]) -> list[torch.Tensor]:
+    def forecast_batch(self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]) -> list[torch.Tensor]:
         """Forecast on a batch of prepared inputs.
 
         Subclasses must implement this to call their model's inference.
@@ -196,12 +197,14 @@ class BaseTSFMSolver(BaseSolver):
         Parameters
         ----------
         inputs
-            Prepared input tensors (model-specific format)
+            Prepared input tensors of shape: (lookback, channel)
+        covariates
+            Corresponding covariates for each input
 
         Returns
         -------
         list of torch.Tensor
-            Model output tensors (model-specific format)
+            Model output tensors of shape: (horizon, channel, quantiles)
         """
         raise NotImplementedError(
             "Subclasses must implement forecast_batch to call their model"
@@ -233,6 +236,7 @@ class BaseTSFMSolver(BaseSolver):
             With per-series quantile arrays
         """
         inputs = []
+        covariates = []
         layout = []  # (series_idx, cutoff_idx) per input
         per_series_shape = []  # (C, n_cutoffs) per series
 
@@ -245,24 +249,25 @@ class BaseTSFMSolver(BaseSolver):
 
             for cutoff_idx, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]  # (T_cutoff, C)
-                inputs.append(torch.from_numpy(hist.T))
+                inputs.append(torch.from_numpy(hist))
+                covariates.append(x.covariates.slice(cutoff, prediction_length))
                 layout.append((series_idx, cutoff_idx))
 
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
 
-        raw = self.forecast_batch(inputs)
-        # raw: list of model outputs aligned with inputs
+        # TODO We still do this in batches in case data is very large
 
-        Q = len(quantile_levels)
-        per_series = [
-            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
-            for C, n_cutoffs in per_series_shape
+        # Get a list of model outputs aligned with inputs
+        raw = self.forecast_batch(inputs, covariates)
+
+        per_series_preds: list[list] = [
+            [None] * n_cutoffs for _, n_cutoffs in per_series_shape
         ]
-
         for (series_idx, cutoff_idx), pred in zip(layout, raw):
-            arr = pred.float().cpu().numpy()  # (C, Q, H)
-            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+            per_series_preds[series_idx][cutoff_idx] = pred.float().cpu().numpy()
+
+        per_series = [np.stack(preds) for preds in per_series_preds]
 
         return ForecastOutput(
             quantiles=per_series, quantile_levels=quantile_levels

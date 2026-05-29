@@ -243,14 +243,14 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
 
         Q = len(levels)
         preds = np.empty(
-            (len(cutoffs), Q, self.prediction_length, C), dtype=np.float32
+            (len(cutoffs), self.prediction_length, C, Q), dtype=np.float32
         )
         for c in range(C):
             channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
             for k, fcd in enumerate(fcds):
                 window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(self.prediction_length)
                 for q_idx, col in enumerate(quantile_cols):
-                    preds[k, q_idx, :, c] = window[col].to_numpy(dtype=np.float32)
+                    preds[k, :, c, q_idx] = window[col].to_numpy(dtype=np.float32)
         return preds, tuple(levels)
 
 

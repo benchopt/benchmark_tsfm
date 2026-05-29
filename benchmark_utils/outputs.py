@@ -21,7 +21,7 @@ class ForecastOutput:
     ----------
     quantiles : sequence of np.ndarray
         One ndarray per series, each shape
-        ``(n_cutoffs_i, Q, prediction_length, C)``. ``quantiles[i][k, q]``
+        ``(n_cutoffs_i, prediction_length, C, Q)``. ``quantiles[i][k, :, :, q]``
         is the forecast for series ``i``, cutoff ``k``, at quantile level
         ``quantile_levels[q]``.
     quantile_levels : sequence of float
@@ -38,11 +38,11 @@ class ForecastOutput:
             if arr.ndim != 4:
                 raise ValueError(
                     f"quantiles[{i}] must have ndim=4 "
-                    f"(n_cutoffs, Q, prediction_length, C); got shape {arr.shape}"
+                    f"(n_cutoffs, prediction_length, C, Q); got shape {arr.shape}"
                 )
-            if arr.shape[1] != Q:
+            if arr.shape[3] != Q:
                 raise ValueError(
-                    f"quantiles[{i}].shape[1] ({arr.shape[1]}) must equal "
+                    f"quantiles[{i}].shape[3] ({arr.shape[3]}) must equal "
                     f"len(quantile_levels) ({Q})"
                 )
 
@@ -55,5 +55,5 @@ class ForecastOutput:
         levels = list(self.quantile_levels)
         if 0.5 in levels:
             idx = levels.index(0.5)
-            return [arr[:, idx, :, :] for arr in self.quantiles]
-        return [arr.mean(axis=1) for arr in self.quantiles]
+            return [arr[:, :, :, idx] for arr in self.quantiles]
+        return [arr.mean(axis=3) for arr in self.quantiles]

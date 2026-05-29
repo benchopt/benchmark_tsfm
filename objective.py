@@ -201,7 +201,7 @@ class Objective(BaseObjective):
                     qs = []
                     for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
-                        qs.append(np.zeros((len(cutoffs), 1, H, C), dtype=np.float32))
+                        qs.append(np.zeros((len(cutoffs), H, C, 1), dtype=np.float32))
                     return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
                 elif self._task == "classification":
                     return np.zeros(len(x), dtype=np.int64)
