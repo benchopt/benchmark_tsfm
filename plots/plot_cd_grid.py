@@ -38,6 +38,9 @@ from scipy.stats import friedmanchisquare, rankdata, studentized_range
 
 from benchopt import BasePlot
 
+sys.path.insert(0, str(Path(__file__).parent))
+from elo import HIGHER_IS_BETTER  # noqa: E402
+
 
 def short_solver(name: str) -> str:
     return re.sub(r"\[.*?\]$", "", str(name)).strip()
@@ -86,7 +89,6 @@ def prepare_matrix(df: pd.DataFrame, metric: str, top_k: int | None = None,
 
     # Strict: drop datasets with any NaN, drop all-tied datasets
     complete = pivot.loc[:, pivot.notna().all(axis=0)]
-    n_drop_nan = pivot.shape[1] - complete.shape[1]
     if complete.shape[1] > 0:
         var = complete.var(axis=0, skipna=False)
         complete = complete.loc[:, var > 0]
@@ -108,9 +110,13 @@ def prepare_matrix(df: pd.DataFrame, metric: str, top_k: int | None = None,
         note_parts.append(f"strict {complete.shape[0]}×{complete.shape[1]}")
 
     if top_k is not None and complete.shape[0] > top_k:
-        # Keep the k solvers with best mean rank (proxy: lowest mean of the
-        # cleaned metric since lower=better). This keeps the diagram readable.
-        keep = complete.mean(axis=1).nsmallest(top_k).index
+        # Keep the k solvers with the best mean rank.
+        # For higher-is-better metrics use nlargest; lower-is-better nsmallest.
+        means = complete.mean(axis=1)
+        if metric in HIGHER_IS_BETTER:
+            keep = means.nlargest(top_k).index
+        else:
+            keep = means.nsmallest(top_k).index
         complete = complete.loc[keep]
         note_parts.append(f"top-{top_k} solvers")
 
@@ -137,9 +143,11 @@ def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
         ax.axis("off")
         return f"{metric}: insufficient (k={k}, N={n})"
 
-    # Rank within each dataset (lower=better → rank 1 = best)
-    ranks_arr = np.vstack([rankdata(mat[c].values, method="average")
-                           for c in mat.columns]).T
+    # Rank within each dataset.
+    # For higher-is-better metrics, negate so rank 1 = highest value.
+    rank_mat = -mat if metric in HIGHER_IS_BETTER else mat
+    ranks_arr = np.vstack([rankdata(rank_mat[c].values, method="average")
+                           for c in rank_mat.columns]).T
     ranks_df = pd.DataFrame(ranks_arr, index=mat.index, columns=mat.columns)
     mean_ranks = ranks_df.mean(axis=1).rename(short_solver)
     mean_ranks.index = [short_solver(s) for s in mean_ranks.index]

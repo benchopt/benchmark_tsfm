@@ -48,6 +48,16 @@ EPS = 1e-9
 # interpretable across metrics and across re-runs.
 ANCHOR_PREFERENCES = ("seasonal naive", "seasonal_naive", "naive")
 
+# Metrics where a higher value is better. All others are assumed lower-is-better.
+HIGHER_IS_BETTER = frozenset({
+    "objective_balanced_accuracy",
+    "objective_accuracy",
+    "objective_f1_weighted",
+    "objective_auc_roc",
+    "objective_auc_pr",
+    "objective_f1_pa",
+})
+
 
 def _short(name: str) -> str:
     return re.sub(r"\[.*?\]$", "", str(name)).strip()
@@ -206,6 +216,11 @@ class Plot(BasePlot):
             values=objective_column,
             aggfunc="mean",
         )
+        # For higher-is-better metrics, negate so that _pairwise_wins
+        # (which treats lower as better) computes wins correctly.
+        if objective_column in HIGHER_IS_BETTER:
+            pivot = -pivot
+
         # Strict clean: drop datasets where any solver is NaN (Elo needs
         # complete games), then drop all-tied datasets (variance == 0).
         pivot = pivot.loc[:, pivot.notna().all(axis=0)]
@@ -249,10 +264,11 @@ class Plot(BasePlot):
             anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"
         else:
             anchor_desc = f"mean Elo = {ELO_ANCHOR:.0f}"
+        direction = "higher better" if objective_column in HIGHER_IS_BETTER else "lower better"
         return {
             "title": (
                 f"Elo leaderboard — {objective_column} "
-                f"(lower better, bootstrap N={N_BOOTSTRAP}, {anchor_desc}). "
+                f"({direction}, bootstrap N={N_BOOTSTRAP}, {anchor_desc}). "
                 f"Bar = Elo; dots = 95% CI low / high."
             ),
             "ylabel": "Elo",
