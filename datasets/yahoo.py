@@ -14,9 +14,10 @@ class Dataset(BaseDataset):
     requirements = ["pip:pooch"]
 
     parameters = {
-        "record_ids": [["YahooA4Benchmark-TS100_data"]],
+        "record_ids": [["all"]],
         "debug": [False],
         "train_ratio": [0.1],
+        "number": [5]
     }
 
     def get_data(self):
@@ -30,7 +31,8 @@ class Dataset(BaseDataset):
         X_train, X_test, y_test = load_data_tsb_uad(
             path=path, 
             records_ids=self.record_ids, 
-            train_ratio=self.train_ratio
+            train_ratio=self.train_ratio, 
+            number=self.number,
         )
 
         if len(X_test) == 0:

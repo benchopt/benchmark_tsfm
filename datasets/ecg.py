@@ -85,7 +85,8 @@ class Dataset(BaseDataset):
         X_train, X_test, y_test = load_data_tsb_uad(
             path=path, 
             records_ids=self.record_ids, 
-            train_ratio=self.train_ratio
+            train_ratio=self.train_ratio, 
+            number=self.number,
         )
 
         if not X_test:
