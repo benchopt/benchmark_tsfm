@@ -15,6 +15,7 @@ Adding a new task
 2. In ``run``, instantiate the appropriate adapter from
    ``benchmark_utils.adapters`` (or implement a new one there).
 """
+
 from benchopt import BaseSolver
 
 import torch
@@ -31,6 +32,7 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 # ---------------------------------------------------------------------------
 # Thin wrapper exposing the predict() interface expected by the objective
 # ---------------------------------------------------------------------------
+
 
 class _ChronosForecaster:
     """Wraps ChronosPipeline to expose predict(x (T, C)) -> (H, C)."""
@@ -59,22 +61,21 @@ class _ChronosForecaster:
         out = forecast[0].float().cpu().numpy()  # (C, Q, H)
         return out[:, self._median_idx, :].T  # (H, C)
 
-    def predict_batch(self, contexts, prediction_length):
+    def predict_batch(self, contexts: list, prediction_length: int = None) -> list:
         # Forecast several contexts in one call. Each may have a different
         # length; Chronos left-pads them internally. All share one horizon.
         inputs = [np.asarray(c, dtype=np.float32).T for c in contexts]  # (C, t)
         forecast = self.pipeline.predict(
-            inputs, prediction_length=prediction_length
+            inputs, prediction_length=prediction_length or self.prediction_length
         )
         # Each entry has shape (C, Q, H); take the median quantile -> (H, C).
-        return [
-            f.float().cpu().numpy()[:, self._median_idx, :].T for f in forecast
-        ]
+        return [f.float().cpu().numpy()[:, self._median_idx, :].T for f in forecast]
 
 
 # ---------------------------------------------------------------------------
 # Solver
 # ---------------------------------------------------------------------------
+
 
 class Solver(BaseSolver):
     """Chronos zero-shot solver.
