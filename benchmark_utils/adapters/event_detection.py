@@ -28,15 +28,24 @@ y per series: (N=10, 2+k) float32, all-zero rows = empty / no-event slots.
   col 1      : length (normalised to [0,1] over T=512)
   col 2..2+k : binary multi-class one-hot columns (sum >= 1 for real events)
 
-Loss
-----
-For each of the 10 query slots:
-  * has_event mask = (y_cls.sum(-1) > 0)  shape (B, N)
-  * position loss  : smooth_l1 on (start, length), applied only where has_event
-  * class loss     : BCEWithLogitsLoss on all k columns, applied to all slots
-    (empty slots drive logits toward 0, which is the no-event baseline)
+Loss — DETR-style Hungarian matching
+-------------------------------------
+Training uses per-sample optimal bipartite assignment (Hungarian algorithm)
+between the N predicted slots and the M real ground-truth events (M <= N):
 
-Combined: loss = pos_loss + lambda_cls * cls_loss  (lambda_cls=1.0 by default)
+  1. Build cost matrix (N x M) per sample:
+       cost_pos[n,m] = L1(sigmoid(pos_logits[n]), gt_pos[m])   (sum over 2 dims)
+       cost_cls[n,m] = -sum_k sigmoid(cls_logits[n,k]) * gt_cls[m,k]
+       cost[n,m]     = cost_pos[n,m] + lambda_cls * cost_cls[n,m]
+  2. Solve: scipy.optimize.linear_sum_assignment(cost) -> (pred_idx, gt_idx)
+  3. Position loss: smooth_l1 on matched (pred, gt) span pairs.
+  4. Class loss: BCEWithLogitsLoss where
+       - matched slots   -> their assigned GT class vector
+       - unmatched slots -> all-zero target (no-event)
+  5. Average losses over batch.
+
+This gives the model permutation invariance: the N queries can predict events
+in any order and the loss always finds the optimal pairing.
 """
 
 import numpy as np
@@ -159,36 +168,86 @@ class EventHead(nn.Module):
         y: torch.Tensor,
         lambda_cls: float = 1.0,
     ) -> torch.Tensor:
-        """Compute combined position + classification loss.
+        """Compute combined position + classification loss with Hungarian matching.
+
+        For each sample in the batch the optimal bipartite assignment between
+        the N predicted slots and the M real ground-truth events is found via
+        the Hungarian algorithm.  Matched slots are trained on their assigned
+        GT event; unmatched slots are trained toward the no-event class target
+        (all-zero class vector).
 
         Parameters
         ----------
         pos_logits : (B, N, 2) — raw span predictions (sigmoid applied inside)
         cls_logits : (B, N, k) — raw class logits
-        y          : (B, N, 2+k) — ground-truth targets, float32
+        y          : (B, N, 2+k) — ground-truth targets, float32;
+                     all-zero rows are empty / no-event slots
         lambda_cls : float — weight for the class loss term
 
         Returns
         -------
         scalar loss tensor
         """
-        y_pos = y[..., :2]         # (B, N, 2)  start, length
-        y_cls = y[..., 2:]         # (B, N, k)  binary class targets
+        from scipy.optimize import linear_sum_assignment
 
-        # Mask: only penalise position loss on slots that have a real event
-        has_event = (y_cls.sum(dim=-1) > 0).float()  # (B, N)
+        B, N, _ = pos_logits.shape
+        y_pos = y[..., :2]   # (B, N, 2)
+        y_cls = y[..., 2:]   # (B, N, k)
 
-        pos_pred = torch.sigmoid(pos_logits)          # (B, N, 2) in [0,1]
-        pos_loss_per = nn.functional.smooth_l1_loss(
-            pos_pred, y_pos, reduction="none"
-        ).mean(dim=-1)                                # (B, N)
-        pos_loss = (pos_loss_per * has_event).sum() / (has_event.sum() + 1e-6)
+        pos_pred = torch.sigmoid(pos_logits)   # (B, N, 2) in [0,1]
+        cls_prob = torch.sigmoid(cls_logits)   # (B, N, k) in [0,1]
 
-        cls_loss = nn.functional.binary_cross_entropy_with_logits(
-            cls_logits, y_cls, reduction="mean"
-        )
+        total_pos_loss = pos_logits.new_zeros(())
+        total_cls_loss = pos_logits.new_zeros(())
 
-        return pos_loss + lambda_cls * cls_loss
+        for b in range(B):
+            # Identify real GT events for this sample
+            has_event_b = y_cls[b].sum(dim=-1) > 0   # (N,) bool mask over GT slots
+            gt_pos = y_pos[b][has_event_b]            # (M, 2)
+            gt_cls = y_cls[b][has_event_b]            # (M, k)
+            M = gt_pos.shape[0]
+
+            pred_pos_b = pos_pred[b]      # (N, 2)
+            cls_logits_b = cls_logits[b]  # (N, k)
+            cls_prob_b = cls_prob[b]       # (N, k) — used for cost matrix only
+
+            if M == 0:
+                # No GT events: drive all slots to no-event (zero target)
+                total_cls_loss = total_cls_loss + nn.functional.binary_cross_entropy_with_logits(
+                    cls_logits_b,
+                    torch.zeros_like(cls_logits_b),
+                    reduction="mean",
+                )
+                continue
+
+            # --- cost matrix (N x M) ----------------------------------------
+            # L1 position cost: sum of |pred - gt| over the 2 span dimensions
+            with torch.no_grad():
+                cost_pos = torch.cdist(pred_pos_b, gt_pos, p=1)          # (N, M)
+                # Class cost: negative dot product of sigmoid probabilities and
+                # GT class vectors — lower cost means better class agreement.
+                cost_cls = -(cls_prob_b @ gt_cls.T)                       # (N, M)
+                cost = cost_pos + lambda_cls * cost_cls                   # (N, M)
+
+            pred_idx, gt_idx = linear_sum_assignment(cost.cpu().numpy())
+
+            # --- position loss on matched pairs --------------------------------
+            matched_pred_pos = pred_pos_b[pred_idx]   # (M, 2)
+            matched_gt_pos = gt_pos[gt_idx]            # (M, 2)
+            pos_loss_b = nn.functional.smooth_l1_loss(
+                matched_pred_pos, matched_gt_pos, reduction="mean"
+            )
+            total_pos_loss = total_pos_loss + pos_loss_b
+
+            # --- class loss: matched → GT class, unmatched → zero target -------
+            cls_target = torch.zeros_like(cls_logits_b)    # (N, k) all zeros
+            cls_target[pred_idx] = gt_cls[gt_idx]          # matched slots get real labels
+            cls_loss_b = nn.functional.binary_cross_entropy_with_logits(
+                cls_logits_b, cls_target, reduction="mean"
+            )
+            total_cls_loss = total_cls_loss + cls_loss_b
+
+        return (total_pos_loss + lambda_cls * total_cls_loss) / B
 
 
 # ---------------------------------------------------------------------------
