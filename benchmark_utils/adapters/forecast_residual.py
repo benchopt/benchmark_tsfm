@@ -22,8 +22,8 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
 
     Parameters
     ----------
-    forecaster : object with
-        ``predict(context: np.ndarray (T, C)) -> np.ndarray (H, C)``
+    forecaster : object exposing the batched forecasting predict API
+        (see :class:`BaseTSFMAdapter`).
     prediction_length : int
         Number of steps predicted at each position (default 1).
     min_context : int
@@ -47,20 +47,22 @@ class ForecastResidualAdapter(BaseTSFMAdapter):
         scores : (T,) float — higher means more anomalous.
             Timesteps before ``min_context`` receive score 0.
         """
-        T, C = x.shape
+        T = x.shape[0]
         scores = np.zeros(T, dtype=np.float32)
+        cutoffs = list(range(self.min_context, T - self.prediction_length + 1))
+        if not cutoffs:
+            return scores
 
-        for t in range(self.min_context, T):
-            context = x[:t]  # (t, C)
-            try:
-                pred = self.forecaster.predict(context)  # (H, C) or (H,)
-                pred = np.asarray(pred).reshape(self.prediction_length, -1)
-                actual = x[t: t + self.prediction_length]  # (H, C)
-                if actual.shape[0] < self.prediction_length:
-                    continue
-                error = float(np.mean(np.abs(pred - actual)))
-            except Exception:
-                error = 0.0
-            scores[t] = error
+        from benchmark_utils.inputs import ForecastInput
+        try:
+            output = self.forecaster.predict(
+                ForecastInput(x=[x], cutoff_indexes=[cutoffs])
+            )
+            preds = output.point[0]  # (n_cutoffs, H, C)
+        except Exception:
+            return scores
 
+        for k, t in enumerate(cutoffs):
+            actual = x[t: t + self.prediction_length]
+            scores[t] = float(np.mean(np.abs(preds[k] - actual)))
         return scores
