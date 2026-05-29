@@ -70,7 +70,12 @@ class _ChronosForecaster(BaseTSFMAdapter):
         self.prediction_length = prediction_length
         self.quantile_levels = quantile_levels or self.DEFAULT_QUANTILE_LEVELS
 
-    def predict(self, x: ForecastInput) -> ForecastOutput:
+    # ------------------------------------------------------------------
+    # Template method — subclasses override _build_inputs / _assemble
+    # ------------------------------------------------------------------
+
+    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+        horizon = prediction_length or self.prediction_length
         inputs, layout, per_series_shape = self._build_inputs(x)
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
@@ -78,9 +83,9 @@ class _ChronosForecaster(BaseTSFMAdapter):
         with torch.no_grad():
             output = self.pipeline.predict(
                 inputs,
-                prediction_length=self.prediction_length,
+                prediction_length=horizon,
             )
-        return self._assemble_output(output, layout, per_series_shape)
+        return self._assemble_output(output, layout, per_series_shape, horizon)
 
     def _build_inputs(self, x):
         """Build list of 1-D tensors (one per channel) and track layout."""
@@ -100,7 +105,7 @@ class _ChronosForecaster(BaseTSFMAdapter):
                     layout.append((series_idx, cutoff_idx, c))
         return inputs, layout, per_series_shape
 
-    def _assemble_output(self, samples, layout, per_series_shape):
+    def _assemble_output(self, samples, layout, per_series_shape, prediction_length):
         """Derive quantile fan from Monte-Carlo sample draws."""
         # samples: (n_inputs, num_samples, H)
         q_arr = np.quantile(
@@ -111,7 +116,7 @@ class _ChronosForecaster(BaseTSFMAdapter):
 
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
         for i, (series_idx, cutoff_idx, c) in enumerate(layout):
@@ -420,10 +425,12 @@ class Solver(BaseTSFMSolver):
             adapter.fit(self.X_train, self.y_train)
             return adapter
 
-        elif task == "anomaly_detection":
-            # AD uses one-step-ahead forecasts.
-            self.prediction_length = 1
-            quantile_levels = (0.5,)
+        elif self.task == "anomaly_detection":
+            # AD scores forecast residuals over an adaptive horizon.
+            self._adapter = ForecastResidualAdapter(
+                # prediction_length is ignored by the forecaster in AD mode
+                _ChronosForecaster(self._pipeline, prediction_length=1),
+            )
 
             # Create a forecaster adapter for residual-based anomaly detection
             class _ForecasterForAD(BaseTSFMAdapter):
