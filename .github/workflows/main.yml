@@ -20,3 +20,5 @@ jobs:
       benchopt_version: latest
   lint:
     uses: benchopt/template_benchmark/.github/workflows/lint_benchmarks.yml@main
+    with:
+      linter: ruff

@@ -3,7 +3,12 @@
 /outputs/
 /data/
 **/build/
+physionet*
+venv*
 
 # Cache directory
 **/__cache__
 **/__pycache__
+
+
+.vscode/
