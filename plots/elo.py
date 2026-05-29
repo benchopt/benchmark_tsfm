@@ -36,13 +36,35 @@ from benchopt import BasePlot
 
 # Chess / Chatbot Arena / TabArena convention: 400-Elo gap = 91% win rate
 ELO_SCALE = 400.0 / math.log(10)
-ELO_ANCHOR = 1000.0  # mean Elo across solvers
+ELO_ANCHOR = 1000.0  # Elo assigned to the anchor solver (see ANCHOR_PREFERENCES)
 N_BOOTSTRAP = 200
 EPS = 1e-9
+
+# Reference baseline for Elo normalisation. We prefer "Seasonal Naive" — the
+# canonical forecasting reference — but fall back to plain "Naive" if no
+# seasonal variant is present, and finally to the mean-anchor if no naive
+# baseline exists at all. TabArena anchors default RandomForest at 1000 for
+# the same reason: a fixed, well-understood reference makes the Elo gap
+# interpretable across metrics and across re-runs.
+ANCHOR_PREFERENCES = ("seasonal naive", "seasonal_naive", "naive")
 
 
 def _short(name: str) -> str:
     return re.sub(r"\[.*?\]$", "", str(name)).strip()
+
+
+def _find_anchor_idx(solvers: list[str]) -> tuple[int | None, str | None]:
+    """Pick the solver index used to anchor Elo at ELO_ANCHOR.
+
+    Returns ``(index, short_name)`` of the matched solver, or ``(None, None)``
+    if no preferred baseline is present (the caller falls back to mean-anchor).
+    """
+    shorts = [_short(s).lower() for s in solvers]
+    for needle in ANCHOR_PREFERENCES:
+        for i, name in enumerate(shorts):
+            if needle in name:
+                return i, _short(solvers[i])
+    return None, None
 
 
 def _pairwise_wins(mat: np.ndarray) -> np.ndarray:
@@ -97,18 +119,28 @@ def _fit_bt(W: np.ndarray) -> np.ndarray:
 
 
 def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
-               seed: int = 0) -> pd.DataFrame:
+               seed: int = 0) -> tuple[pd.DataFrame, str | None]:
     """Compute per-solver Elo + 95% bootstrap CI.
 
-    Returns a DataFrame sorted by Elo descending with columns:
-        solver, elo, ci_low, ci_high, games
+    Returns ``(table, anchor_name)`` where ``table`` is a DataFrame sorted by
+    Elo descending with columns (solver, elo, ci_low, ci_high, games), and
+    ``anchor_name`` is the short name of the solver pinned at ``ELO_ANCHOR``
+    (or ``None`` if mean-anchoring was used).
     """
     arr = mat.to_numpy(dtype=np.float64)
     k, n = arr.shape
     solvers = list(mat.index)
+    anchor_idx, anchor_name = _find_anchor_idx(solvers)
+
+    def _shift(r: np.ndarray) -> np.ndarray:
+        # Translate the BT log-ratings so the anchor sits at zero. If no
+        # anchor solver is present, the BT fit already centres at the mean.
+        if anchor_idx is None:
+            return r
+        return r - r[anchor_idx]
 
     # Point estimate on the full data
-    r_full = _fit_bt(_pairwise_wins(arr))
+    r_full = _shift(_fit_bt(_pairwise_wins(arr)))
     elo_full = r_full * ELO_SCALE + ELO_ANCHOR
 
     # Bootstrap CI by resampling datasets with replacement
@@ -116,7 +148,7 @@ def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
     boots = np.zeros((n_boot, k))
     for b in range(n_boot):
         idx = rng.integers(0, n, size=n)
-        r_b = _fit_bt(_pairwise_wins(arr[:, idx]))
+        r_b = _shift(_fit_bt(_pairwise_wins(arr[:, idx])))
         boots[b] = r_b * ELO_SCALE + ELO_ANCHOR
 
     ci_low = np.percentile(boots, 2.5, axis=0)
@@ -132,7 +164,7 @@ def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
         "ci_high": ci_high,
         "games": games,
     }).sort_values("elo", ascending=False).reset_index(drop=True)
-    return out
+    return out, anchor_name
 
 
 class Plot(BasePlot):
@@ -185,7 +217,7 @@ class Plot(BasePlot):
         if k < 2 or n < 2:
             return [{"y": [0.0], "label": "(insufficient data)", "text": ""}]
 
-        table = _elo_table(pivot)
+        table, _ = _elo_table(pivot)
         bars = []
         for row in table.itertuples(index=False):
             bars.append({
@@ -202,11 +234,26 @@ class Plot(BasePlot):
         return bars
 
     def get_metadata(self, df, objective_column):
+        # Re-derive the anchor name from the same data the plot() call saw
+        # so the title accurately reflects which solver sits at 1000.
+        anchor_name = None
+        pivot = df.pivot_table(
+            index="solver_name", columns="dataset_name",
+            values=objective_column, aggfunc="mean",
+        )
+        pivot = pivot.loc[:, pivot.notna().all(axis=0)]
+        if pivot.shape[0] >= 2:
+            _, anchor_name = _find_anchor_idx(list(pivot.index))
+
+        if anchor_name:
+            anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"
+        else:
+            anchor_desc = f"mean Elo = {ELO_ANCHOR:.0f}"
         return {
             "title": (
                 f"Elo leaderboard — {objective_column} "
-                f"(lower better, bootstrap N={N_BOOTSTRAP}, mean anchored at "
-                f"{ELO_ANCHOR:.0f}). Bar = Elo; dots = 95% CI low / high."
+                f"(lower better, bootstrap N={N_BOOTSTRAP}, {anchor_desc}). "
+                f"Bar = Elo; dots = 95% CI low / high."
             ),
             "ylabel": "Elo",
         }
