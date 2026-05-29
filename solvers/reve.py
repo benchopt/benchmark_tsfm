@@ -106,8 +106,11 @@ class Solver(BaseSolver):
             device = "cpu"
 
         # Source sampling rate and electrode names must come from the
-        # dataset's meta — REVE cannot infer them.
-        self._src_sfreq = float(meta.get("freq", REVE_SFREQ))
+        # dataset's meta — REVE cannot infer them. ``dict.get(k, default)``
+        # only falls back when the key is absent, so we coalesce ``None``
+        # values too (datasets may set ``freq=None`` to signal "unknown").
+        freq = meta.get("freq") or REVE_SFREQ
+        self._src_sfreq = float(freq)
         self._ch_names = meta.get("ch_names", None)
         if self._ch_names is None:
             raise ValueError(
@@ -193,7 +196,7 @@ class Solver(BaseSolver):
             with torch.no_grad():
                 emb = self._network(x_t, pos)
             # If REVE returns a sequence/spatial map (n_chans × n_patches
-            # × D), flatten the trailing axes into one vector per sample.
+            # × D), flatten the trailing axes into one vector per sample
             if emb.ndim > 2:
                 emb = emb.flatten(start_dim=1)
 

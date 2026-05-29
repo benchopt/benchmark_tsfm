@@ -158,7 +158,7 @@ class Dataset(BaseDataset):
                 sub_id, preprocessors, self.window_size_samples
             )
             if sfreq_ref is None:
-                sfreq_ref, ch_names_ref = sfreq_ref, ch_names
+                sfreq_ref, ch_names_ref = sfreq, ch_names
             else:
                 assert sfreq == sfreq_ref and ch_names == ch_names_ref, f"Inconsistent meta for sub {sub_id}"
             X_all.append(X_)
