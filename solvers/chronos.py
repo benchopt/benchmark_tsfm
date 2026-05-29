@@ -237,9 +237,8 @@ class Solver(BaseSolver):
         if self.task == "forecasting":
             pred_len = self.meta.get("prediction_length", 1)
             self._adapter = _ChronosForecaster(self._pipeline, pred_len)
-            return
 
-        if self.task == "classification":
+        elif self.task == "classification":
             base_encoder = ChronosEncoder(self._pipeline, layer=self.layer)
             encoder = Encoder(base_encoder, POOLERS[self.pooler]())
             adapter = LinearProbeAdapter(
