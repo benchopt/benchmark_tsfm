@@ -275,8 +275,6 @@ class Solver(BaseSolver):
                 _ChronosForecaster(self._pipeline, prediction_length=1),
                 prediction_length=1,
             )
-            adapter.fit(self.X_train, self.y_train)
-            self._adapter = adapter
 
     def get_result(self):
         return {"model": self._adapter}
