@@ -20,7 +20,8 @@ from pathlib import Path
 
 from benchopt import BaseDataset
 from benchopt.config import get_data_path
-from benchmark_utils.download import fetch_tsb_uad
+from benchmark_utils.download import fetch_tsb_uad, load_data_tsb_uad
+from benchmark_utils.metrics import AD_METRICS
 
 
 def _load_records(db_path, record_ids, number):
@@ -81,24 +82,15 @@ class Dataset(BaseDataset):
         except ImportError:
             path = get_data_path("ECG")
 
-        record_ids = self.record_ids
-        X_raw, y_raw = _load_records(path, record_ids, self.number)
+        X_train, X_test, y_test = load_data_tsb_uad(
+            path=path, 
+            records_ids=self.record_ids, 
+            train_ratio=self.train_ratio, 
+            number=self.number,
+        )
 
-        if not X_raw:
+        if not X_test:
             raise ValueError("No valid ECG records found.")
-
-        X_train, X_test, y_test = [], [], []
-        for x, y in zip(X_raw, y_raw):
-            if self.debug:
-                x = x[:5000]
-                y = y[:5000]
-
-            split = max(1, int(len(x) * self.train_ratio))
-
-            # Reshape to (T, C=1)
-            X_train.append(x[:split].reshape(-1, 1))
-            X_test.append(x[split:].reshape(-1, 1))
-            y_test.append(y[split:])
 
         return dict(
             X_train=X_train,
@@ -106,5 +98,5 @@ class Dataset(BaseDataset):
             X_test=X_test,
             y_test=y_test,
             task="anomaly_detection",
-            metrics=["auc_roc", "auc_pr", "f1_pa"],
+            metrics=AD_METRICS.keys(),
         )

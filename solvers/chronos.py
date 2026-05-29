@@ -5,13 +5,15 @@ Supports:
   - classification  : linear probe on pooled encoder embeddings
   - anomaly_detection  : forecast-residual on top of the same forecaster
 
-Anomaly detection is currently broken and skipped.
-
 Model loading is done in ``set_objective`` (untimed). Inference batches
-every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
+every (series, cutoff) pair into a single ``ChronosPipeline.predict``
 call — the pipeline accepts a list of variable-length tensors and
 applies left-padding internally, so all the per-cutoff work happens in
 one forward pass.
+
+References
+----------
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
@@ -42,17 +44,37 @@ POOLERS = {
 
 
 class _ChronosForecaster(BaseTSFMAdapter):
-    """Batched Chronos-2 adapter returning a full quantile fan."""
+    """Batched Chronos v1 adapter; quantiles are derived from sample draws."""
 
-    def __init__(self, pipeline, prediction_length):
+    DEFAULT_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+
+    def __init__(self, pipeline, prediction_length, quantile_levels=None):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
-        self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
+        self.quantile_levels = quantile_levels or self.DEFAULT_QUANTILE_LEVELS
 
-    def predict(self, x: ForecastInput) -> ForecastOutput:
+    # ------------------------------------------------------------------
+    # Template method — subclasses override _build_inputs / _assemble
+    # ------------------------------------------------------------------
+
+    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+        horizon = prediction_length or self.prediction_length
+        inputs, layout, per_series_shape = self._build_inputs(x)
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
+
+        with torch.no_grad():
+            output = self.pipeline.predict(
+                inputs,
+                prediction_length=horizon,
+            )
+        return self._assemble_output(output, layout, per_series_shape, horizon)
+
+    def _build_inputs(self, x):
+        """Build list of 1-D tensors (one per channel) and track layout."""
         inputs = []
-        layout = []  # (series_idx, cutoff_idx) per input element
-        per_series_shape = []  # (C, n_cutoffs) per series
+        layout = []  # (series_idx, cutoff_idx, channel_idx)
+        per_series_shape = []  # (C, n_cutoffs)
         for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
             if series.ndim == 1:
@@ -60,58 +82,58 @@ class _ChronosForecaster(BaseTSFMAdapter):
             _, C = series.shape
             per_series_shape.append((C, len(cutoffs)))
             for cutoff_idx, cutoff in enumerate(cutoffs):
-                hist = series[:cutoff]  # (T_cutoff, C)
-                inputs.append(torch.from_numpy(hist.T))  # (C, T_cutoff)
-                layout.append((series_idx, cutoff_idx))
+                hist = series[:cutoff]
+                for c in range(C):
+                    inputs.append(torch.from_numpy(hist[:, c]))
+                    layout.append((series_idx, cutoff_idx, c))
+        return inputs, layout, per_series_shape
 
-        if not inputs:
-            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
-
-        with torch.no_grad():
-            forecast = self.pipeline.predict(
-                inputs,
-                prediction_length=self.prediction_length,
-            )
-        # forecast: list[(n_variates, Q, prediction_length)] aligned with `inputs`.
+    def _assemble_output(self, samples, layout, per_series_shape, prediction_length):
+        """Derive quantile fan from Monte-Carlo sample draws."""
+        # samples: (n_inputs, num_samples, H)
+        q_arr = np.quantile(
+            samples.float().cpu().numpy(),
+            q=list(self.quantile_levels),
+            axis=1,
+        ).transpose(1, 0, 2)  # (n_inputs, Q, H)
 
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
-        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
-            arr = pred.float().cpu().numpy()  # (C, Q, H)
-            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+        for i, (series_idx, cutoff_idx, c) in enumerate(layout):
+            per_series[series_idx][cutoff_idx, :, :, c] = q_arr[i]
+
         return ForecastOutput(
             quantiles=per_series, quantile_levels=self.quantile_levels
         )
 
 
-def _to_context(x):
-    """Reshape ``(T, V)`` or ``(B, T, V)`` to Chronos input ``(B, V, T)``."""
-    x = np.asarray(x, dtype=np.float32)
-    if x.ndim == 2:
-        x = x[None]
-    return x.transpose(0, 2, 1)
-
-
 class _ChronosEmbedEncoder(UnpooledEncoder):
-    """Default path — uses ``Chronos2Pipeline.embed``.
+    """Default path — uses ``ChronosPipeline.embed``.
 
-    Returns hidden states *after* ``encoder.final_layer_norm`` for each
-    series in the batch.
+    Returns hidden states *after* ``encoder.final_layer_norm``.
     """
 
     def __init__(self, pipeline: ChronosPipeline):
         self.pipeline = pipeline
 
     def encode(self, X) -> np.ndarray:
-        context = _to_context(X)  # (B, V, T)
+        # X: (B, T, V) or (T, V).
+        X = np.asarray(X, dtype=np.float32)
+        batched = X.ndim == 3
+        if not batched:
+            X = X[None]  # (1, T, V)
+        B, T, V = X.shape
+
+        # Chronos is univariate — flatten B & V into the batch axis.
+        flat = X.reshape(B * V, T)  # (B*V, T)
         with torch.no_grad():
-            # embed returns a list of B tensors, each of shape (V, T, D).
-            embeddings, _ = self.pipeline.embed(context)
-        stacked = torch.stack(list(embeddings))  # (B, V, T, D)
-        return stacked.transpose(1, 2).float().cpu().numpy()  # (B, T, V, D)
+            emb, _ = self.pipeline.embed(torch.from_numpy(flat))  # (B*V, T_tok, D)
+
+        # (B*V, T_tok, D) -> (B, T_tok, V, D)
+        return emb.float().cpu().numpy().reshape(B, -1, V, emb.shape[-1])
 
 
 class _ChronosHookEncoder(UnpooledEncoder):
@@ -130,8 +152,15 @@ class _ChronosHookEncoder(UnpooledEncoder):
             )
         self._block_idx = layer % n_blocks
 
-    def encode(self, x: np.ndarray) -> np.ndarray:
-        context = _to_context(x)  # (B, V, T)
+    def encode(self, X) -> np.ndarray:
+        X = np.asarray(X, dtype=np.float32)
+        batched = X.ndim == 3
+        if not batched:
+            X = X[None]  # (1, T, V)
+        B, T, V = X.shape
+
+        flat = X.reshape(B * V, T)  # (B*V, T)
+        context = torch.from_numpy(flat)
         token_ids, attn_mask, _ = self.pipeline.tokenizer.context_input_transform(
             context
         )
@@ -143,8 +172,6 @@ class _ChronosHookEncoder(UnpooledEncoder):
         captured = {}
 
         def _hook(_module, _inputs, output):
-            # Hook to capture the embeddings while performing a forward pass
-            # T5Block returns a tuple; first element is the hidden state.
             hidden = output[0] if isinstance(output, tuple) else output
             captured["h"] = hidden.detach()
 
@@ -155,8 +182,14 @@ class _ChronosHookEncoder(UnpooledEncoder):
         finally:
             handle.remove()
 
-        # (C, T_tok, D) -> (T_tok, C, D)
-        return captured["h"].transpose(0, 1).float().cpu().numpy()
+        # (B*V, T_tok, D) -> (B, T_tok, V, D)
+        return (
+            captured["h"]
+            .float()
+            .cpu()
+            .numpy()
+            .reshape(B, -1, V, captured["h"].shape[-1])
+        )
 
 
 def ChronosEncoder(
@@ -198,7 +231,7 @@ def ChronosEncoder(
 
 
 class Solver(BaseSolver):
-    """Chronos-2 zero-shot solver.
+    """Chronos zero-shot solver.
 
     Parameters
     ----------
@@ -217,7 +250,7 @@ class Solver(BaseSolver):
 
     name = "Chronos"
 
-    requirements = ["pip::chronos-forecasting>=2.2,<3"]
+    requirements = ["pip::chronos-forecasting>=2.2", "pip::torch"]
 
     sampling_strategy = "run_once"
 
@@ -225,6 +258,11 @@ class Solver(BaseSolver):
         "model_size": ["small"],
         "layer": [None],
         "pooler": ["mean"],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
@@ -233,8 +271,6 @@ class Solver(BaseSolver):
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
-        from chronos import Chronos2Pipeline
-
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
@@ -244,9 +280,9 @@ class Solver(BaseSolver):
         # fall back to float32 there so inference doesn't crash or stall.
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        model_id = f"autogluon/chronos-2-{self.model_size}"
+        model_id = f"amazon/chronos-t5-{self.model_size}"
         if not hasattr(self, "_pipeline") or self._loaded_model != model_id:
-            self._pipeline = Chronos2Pipeline.from_pretrained(
+            self._pipeline = ChronosPipeline.from_pretrained(
                 model_id,
                 device_map=device,
                 dtype=dtype,
@@ -270,10 +306,10 @@ class Solver(BaseSolver):
             self._adapter = adapter
 
         elif self.task == "anomaly_detection":
-            # AD uses one-step-ahead forecasts.
+            # AD scores forecast residuals over an adaptive horizon.
             self._adapter = ForecastResidualAdapter(
+                # prediction_length is ignored by the forecaster in AD mode
                 _ChronosForecaster(self._pipeline, prediction_length=1),
-                prediction_length=1,
             )
 
     def get_result(self):

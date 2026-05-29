@@ -9,3 +9,6 @@ venv*
 # Cache directory
 **/__cache__
 **/__pycache__
+
+
+.vscode/

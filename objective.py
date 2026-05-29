@@ -138,27 +138,24 @@ class Objective(BaseObjective):
                 "leakage": 1.0,
             }
 
-        output = model.predict(forecast_input)
+        forecast = model.predict(forecast_input).flatten()  # (M, Q, H, C)
 
-        preds, targets = [], []
-        for series_point, series_targets in zip(output.point, self.y_test):
-            sp = np.asarray(series_point)  # (n_cutoffs, H, C)
-            st = np.asarray(series_targets)
-            for k in range(sp.shape[0]):
-                preds.append(sp[k])
-                targets.append(st[k])
+        # Concatenate per-series targets into a single (M, H, C) array, in the
+        # same order the flattened forecast iterates (series-major, cutoff-minor).
+        y_true = np.concatenate(
+            [np.asarray(yt) for yt in self.y_test], axis=0
+        )
 
-        preds = np.array(preds)
-        targets = np.array(targets)
-
-        result = {"leakage": 0.0}
-        for name in self.metrics:
-            fn = ALL_METRICS[name]
-            if name == "mase":
-                result[name] = fn(targets, preds, y_train=self.X_train,
-                                  seasonality=self.meta.get("seasonality", 1))
-            else:
-                result[name] = fn(targets, preds)
+        kwargs = dict(
+            y_train=self.X_train,
+            seasonality=self.meta.get("seasonality", 1),
+            alpha=self.meta.get("mcis_alpha", 0.05),
+        )
+        result = {
+            name: ALL_METRICS[name](y_true, forecast, **kwargs)
+            for name in self.metrics
+        }
+        result["leakage"] = 0.0
         return result
 
     # --- classification ------------------------------------------------
