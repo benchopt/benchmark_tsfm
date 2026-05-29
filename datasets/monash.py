@@ -35,24 +35,8 @@ from benchopt import BaseDataset
 
 from aeon.datasets import load_forecasting
 from benchmark_utils.covariates import Covariates
+from benchmark_utils.constants import from_aeon
 from benchmark_utils.windowing import make_forecasting_splits
-
-
-# Map aeon frequency strings → pandas-style freq codes and MASE seasonality
-_FREQ_MAP = {
-    "yearly": ("Y", 1),
-    "quarterly": ("Q", 4),
-    "monthly": ("M", 12),
-    "weekly": ("W", 52),
-    "daily": ("D", 7),
-    "hourly": ("H", 24),
-    "minutely": ("T", 1440),
-    "seconds": ("S", 1),
-}
-
-_DEFAULT_HORIZON = {
-    "Y": 6, "Q": 8, "M": 12, "W": 13, "D": 14, "H": 24, "T": 60,
-}
 
 
 class Dataset(BaseDataset):
@@ -90,14 +74,11 @@ class Dataset(BaseDataset):
         #             contain_missing_values, contain_equal_length
 
         aeon_freq = meta.get("frequency", "yearly")
-        freq, seasonality = _FREQ_MAP.get(aeon_freq, ("D", 1))
+        freq, seasonality, default_h = from_aeon(aeon_freq)
 
         pred_len = self.prediction_length
         if pred_len is None:
-            pred_len = int(
-                meta.get("forecast_horizon")
-                or _DEFAULT_HORIZON.get(freq, 10)
-            )
+            pred_len = int(meta.get("forecast_horizon") or default_h)
 
         series_list = []
         rows = df.iterrows() if not self.debug else list(df.iterrows())[:5]
