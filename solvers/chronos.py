@@ -41,7 +41,9 @@ class _ChronosForecaster:
         # Chronos-2 returns quantile forecasts; locate the median.
         self._median_idx = list(pipeline.quantiles).index(0.5)
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
+    def predict(self, x: np.ndarray, prediction_length: int = None) -> np.ndarray:
+        # prediction_length is used by the forecast-residual adapter to specify how many steps to
+        # forecast at each position; if None, use the default for this forecaster.
 
         # Chronos expects (batch, C, time) tensors.
         x = np.asarray(x, dtype=np.float32).T[None]  # (N, C, T)
@@ -49,13 +51,25 @@ class _ChronosForecaster:
         context = torch.from_numpy(x)
         forecast = self.pipeline.predict(
             context,
-            prediction_length=self.prediction_length,
+            prediction_length=prediction_length or self.prediction_length,
         )
         # forecast is a list of length batch; each entry has shape
         # (n_variates, n_quantiles, H). Take the median quantile and cast
         # to float32 (bfloat16 tensors can't be converted to numpy).
         out = forecast[0].float().cpu().numpy()  # (C, Q, H)
         return out[:, self._median_idx, :].T  # (H, C)
+
+    def predict_batch(self, contexts, prediction_length):
+        # Forecast several contexts in one call. Each may have a different
+        # length; Chronos left-pads them internally. All share one horizon.
+        inputs = [np.asarray(c, dtype=np.float32).T for c in contexts]  # (C, t)
+        forecast = self.pipeline.predict(
+            inputs, prediction_length=prediction_length
+        )
+        # Each entry has shape (C, Q, H); take the median quantile -> (H, C).
+        return [
+            f.float().cpu().numpy()[:, self._median_idx, :].T for f in forecast
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +98,7 @@ class Solver(BaseSolver):
     parameters = {
         "model_size": ["small"],
         "task_adaptation": ["zeroshot"],
+        "prediction_length": [96],
     }
 
     def skip(self, task, **kwargs):
@@ -122,7 +137,8 @@ class Solver(BaseSolver):
 
         elif self.task == "anomaly_detection":
             self._adapter = ForecastResidualAdapter(
-                forecaster, prediction_length=1
+                forecaster,
+                prediction_length=self.prediction_length,
             )
 
     def get_result(self):
