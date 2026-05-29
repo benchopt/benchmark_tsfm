@@ -171,9 +171,32 @@ def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
         alpha=alpha,
         text_h_margin=0.005,
     )
-    title = (f"{metric.removeprefix('objective_')}  |  "
-             f"k={k}, N={n}, χ²={chi2:.1f}, p={pval:.1e}  |  "
-             f"CD={cd:.2f}")
+
+    # Expand the top of the y-axis to make room for the CD bar above the diagram
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    extra = 0.18 * (y_max - y_min)
+    ax.set_ylim(y_min, y_max + extra)
+    # Recompute limits after expansion
+    y_min, y_max = ax.get_ylim()
+
+    # --- CD reference bar (top-left corner, Demšar-style) ---
+    bar_y   = y_max - 0.04 * (y_max - y_min)
+    tick_h  = 0.015 * (y_max - y_min)
+    bar_x0  = x_min + 0.03 * (x_max - x_min)
+    bar_x1  = bar_x0 + cd
+    cd_colour = "#555555"
+    ax.plot([bar_x0, bar_x1], [bar_y, bar_y],
+            color=cd_colour, linewidth=1.5, solid_capstyle="butt", zorder=5)
+    for x in (bar_x0, bar_x1):
+        ax.plot([x, x], [bar_y - tick_h, bar_y + tick_h],
+                color=cd_colour, linewidth=1.5, zorder=5)
+    ax.text((bar_x0 + bar_x1) / 2, bar_y + 2 * tick_h,
+            f"CD={cd:.2f}", ha="center", va="bottom",
+            fontsize=7, color=cd_colour, zorder=5)
+    # -------------------------------------------------------
+
+    title = (f"CD diagram for {metric.removeprefix('objective_').upper()} ")
     ax.set_title(title, fontsize=10)
     return f"{metric}: k={k} N={n} chi2={chi2:.2f} p={pval:.2e} CD={cd:.3f}"
 
