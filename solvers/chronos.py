@@ -10,6 +10,10 @@ every (series, cutoff) pair into a single ``ChronosPipeline.predict``
 call — the pipeline accepts a list of variable-length tensors and
 applies left-padding internally, so all the per-cutoff work happens in
 one forward pass.
+
+References
+----------
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
@@ -100,8 +104,9 @@ class _ChronosForecaster(BaseTSFMAdapter):
         for i, (series_idx, cutoff_idx, c) in enumerate(layout):
             per_series[series_idx][cutoff_idx, :, :, c] = q_arr[i]
 
-        return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
-
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=self.quantile_levels
+        )
 
 
 class _ChronosEmbedEncoder(UnpooledEncoder):
@@ -177,7 +182,13 @@ class _ChronosHookEncoder(UnpooledEncoder):
             handle.remove()
 
         # (B*V, T_tok, D) -> (B, T_tok, V, D)
-        return captured["h"].float().cpu().numpy().reshape(B, -1, V, captured["h"].shape[-1])
+        return (
+            captured["h"]
+            .float()
+            .cpu()
+            .numpy()
+            .reshape(B, -1, V, captured["h"].shape[-1])
+        )
 
 
 def ChronosEncoder(

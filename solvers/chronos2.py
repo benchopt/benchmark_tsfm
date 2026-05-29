@@ -10,6 +10,10 @@ every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
 call — the pipeline accepts a list of variable-length tensors and
 applies left-padding internally, so all the per-cutoff work happens in
 one forward pass.
+
+References
+----------
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
@@ -24,12 +28,12 @@ from benchmark_utils.adapters import (
 )
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.outputs import ForecastOutput
+
 from .chronos import (
-    _ChronosForecaster,
     POOLERS,
     SUPPORTED_TASKS,
+    _ChronosForecaster,
 )
-
 
 # ---------------------------------------------------------------------------
 # Chronos-2 encoders — embed() has a different signature than Chronos v1:
@@ -81,7 +85,9 @@ class _Chronos2Forecaster(_ChronosForecaster):
         for (series_idx, cutoff_idx), pred in zip(layout, forecast):
             arr = pred.float().cpu().numpy()  # (C, Q, H)
             per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
-        return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=self.quantile_levels
+        )
 
 
 class _Chronos2EmbedEncoder(UnpooledEncoder):
