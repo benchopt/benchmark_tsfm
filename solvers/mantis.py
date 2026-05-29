@@ -12,11 +12,10 @@ References:
 import numpy as np
 import torch
 from benchopt import BaseSolver
+from mantis.architecture import MantisV1, MantisV2
+from mantis.trainer import MantisTrainer
 
 from benchmark_utils.adapters.linear_probe import LinearProbeAdapter
-from mantis.trainer import MantisTrainer
-from mantis.architecture import MantisV1, MantisV2
-
 
 SUPPORTED_TASKS = {"classification"}
 
@@ -39,10 +38,12 @@ class Solver(BaseSolver):
     parameters = {
         "checkpoint": ["paris-noah/Mantis-8M"],
         "batch_size": [32],
-        "n_estimators": [100],
         "interpolate_to": [512],
-        "max_iter": [1000],
-        "classifier": ["logistic_regression"],
+        "classifier": ["random_forest"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
@@ -72,20 +73,15 @@ class Solver(BaseSolver):
         )
         if should_reload:
             try:
-                MantisBackbone = (
-                    MantisV2 if "MantisV2" in self.checkpoint else MantisV1
-                )
+                MantisBackbone = MantisV2 if "MantisV2" in self.checkpoint else MantisV1
                 network = MantisBackbone(device=device)
                 network = network.from_pretrained(self.checkpoint)
 
                 self._network = network
-                self._trainer = MantisTrainer(
-                    device=device, network=self._network
-                )
+                self._trainer = MantisTrainer(device=device, network=self._network)
                 self._loaded_checkpoint = self.checkpoint
                 print(
-                    f"✓ Mantis checkpoint loaded: {self.checkpoint} "
-                    f"on device: {device}"
+                    f"✓ Mantis checkpoint loaded: {self.checkpoint} on device: {device}"
                 )
             except Exception as e:
                 raise RuntimeError(
@@ -103,10 +99,9 @@ class Solver(BaseSolver):
             task=self.task,
             max_iter=self.max_iter,
             n_estimators=self.n_estimators,
-            classifier=self.classifier
+            classifier=self.classifier,
         )
         self._adapter.fit(self.X_train, self.y_train)
-
 
     def encode(self, x):
         """Encode a batch of time series into embeddings."""
@@ -149,8 +144,8 @@ class Solver(BaseSolver):
                     embedding_dim = all_embeddings[0].shape[1]
                 else:
                     embedding_dim = 128
-                all_embeddings.append(np.zeros(
-                    (batch_end - batch_idx, embedding_dim), dtype=np.float32)
+                all_embeddings.append(
+                    np.zeros((batch_end - batch_idx, embedding_dim), dtype=np.float32)
                 )
 
         # Concatenate all embeddings
@@ -193,6 +188,4 @@ class Solver(BaseSolver):
 
     def get_result(self):
         """Return the fitted adapter."""
-        return {
-            "model": self._adapter
-        }
+        return {"model": self._adapter}
