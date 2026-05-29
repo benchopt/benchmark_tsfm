@@ -500,6 +500,7 @@ def fit_event_head(
     N_train = len(Z_train)
     use_amp = "cuda" in device
     scaler = torch.amp.GradScaler(device, enabled=use_amp)
+    num_batches_per_epoch = max(1, int(np.ceil(N_train / batch_size)))
 
     for epoch in range(num_epochs):
         indices = np.random.permutation(N_train)
@@ -541,15 +542,22 @@ def fit_event_head(
             epoch_loss += loss.item()
             num_batches += 1
 
-        scheduler.step()
-
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            avg = epoch_loss / max(num_batches, 1)
-            lr_now = scheduler.get_last_lr()[0]
             print(
                 f"  Epoch {epoch + 1:3d}/{num_epochs} | "
-                f"loss={avg:.4f} | lr={lr_now:.2e}"
+                f"step {num_batches:4d}/{num_batches_per_epoch} | "
+                f"loss={loss.item():.4f}",
+                end="\r",
             )
+
+        scheduler.step()
+
+        avg = epoch_loss / num_batches
+        lr_now = scheduler.get_last_lr()[0]
+        print(
+            f"  Epoch {epoch + 1:3d}/{num_epochs} | "
+            f"loss={avg:.4f} | lr={lr_now:.2e}"
+            + " " * 20  # clear leftover step line
+        )
 
     head.eval()
     return head

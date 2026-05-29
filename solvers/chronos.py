@@ -258,11 +258,11 @@ class Solver(BaseTSFMSolver):
         "pooler": ["mean"],
         # event_detection — single values so no cross-product for other tasks
         "model_path": [""],
-        "batch_size": [32],
-        "num_epochs": [100],
+        "batch_size": [64],
+        "num_epochs": [3],
         "lr": [3e-4],
         "weight_decay": [1e-4],
-        "warmup_epochs": [5],
+        "warmup_epochs": [1],
         "num_dec_layers": [2],
         "lambda_cls": [1.0],
         "num_queries": [10],
@@ -287,6 +287,11 @@ class Solver(BaseTSFMSolver):
         num_dec_layers=2,
         lambda_cls=1.0,
         num_queries=10,
+        classifier="log_reg",
+        penalty="l2",
+        C=1.0,
+        alpha=1.0,
+        n_iterators=100,
     ):
         """Initialize Chronos-specific state.
 
@@ -314,6 +319,11 @@ class Solver(BaseTSFMSolver):
             num_dec_layers=num_dec_layers,
             lambda_cls=lambda_cls,
             num_queries=num_queries,
+            classifier=classifier,
+            penalty=penalty,
+            C=C,
+            alpha=alpha,
+            n_iterators=n_iterators,
         )
         self._pipeline = None
         self._loaded_model = None
