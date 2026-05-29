@@ -119,34 +119,29 @@ class Objective(BaseObjective):
     def _eval_forecasting(self, model):
         from benchmark_utils.inputs import ForecastInput
 
-        output = model.predict(
+        forecast = model.predict(
             ForecastInput(
                 x=self.X_test,
                 cutoff_indexes=self.cutoff_indexes,
                 covariates=self.covariates,
             )
+        ).flatten()  # canonical (M, Q, H, C) shape for metrics
+
+        # Concatenate per-series targets into a single (M, H, C) array, in the
+        # same order the flattened forecast iterates (series-major, cutoff-minor).
+        y_true = np.concatenate(
+            [np.asarray(yt) for yt in self.y_test], axis=0
         )
 
-        preds, targets = [], []
-        for series_point, series_targets in zip(output.point, self.y_test):
-            sp = np.asarray(series_point)  # (n_cutoffs, H, C)
-            st = np.asarray(series_targets)
-            for k in range(sp.shape[0]):
-                preds.append(sp[k])
-                targets.append(st[k])
-
-        preds = np.array(preds)
-        targets = np.array(targets)
-
-        result = {}
-        for name in self.metrics:
-            fn = ALL_METRICS[name]
-            if name == "mase":
-                result[name] = fn(targets, preds, y_train=self.X_train,
-                                  seasonality=self.meta.get("seasonality", 1))
-            else:
-                result[name] = fn(targets, preds)
-        return result
+        kwargs = dict(
+            y_train=self.X_train,
+            seasonality=self.meta.get("seasonality", 1),
+            alpha=self.meta.get("mcis_alpha", 0.05),
+        )
+        return {
+            name: ALL_METRICS[name](y_true, forecast, **kwargs)
+            for name in self.metrics
+        }
 
     # --- classification ------------------------------------------------
 

@@ -1,11 +1,17 @@
 """
-Metric wrappers for all three tasks.
+Metric wrappers for all four tasks.
 
-Relies on aeon (forecasting metrics), sklearn (classification + AD),
-and a minimal numpy implementation of MASE (not yet in aeon).
+Relies on sklearn (classification + AD) and numpy for forecasting and
+event detection. Forecasting metrics consume a :class:`ForecastOutput`
+so probabilistic metrics (CRPS, WQL, MCIS, Pinball) see the full
+quantile fan; point metrics extract the median internally.
 
-All functions follow the signature:
-    metric(y_true, y_pred, **kwargs) -> float
+Signatures
+----------
+forecasting        : metric(y_true, forecast: ForecastOutput, **kw) -> float
+classification     : metric(y_true, y_pred) -> float
+anomaly_detection  : metric(y_true, y_score) -> float
+event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
 import numpy as np
@@ -17,63 +23,145 @@ from sklearn.metrics import (
     average_precision_score,
 )
 
+from benchmark_utils.outputs import ForecastOutput
+
 
 # ---------------------------------------------------------------------------
-# Forecasting
+# Forecasting — internal helpers
 # ---------------------------------------------------------------------------
 
-def mae(y_true, y_pred):
-    """Mean Absolute Error, averaged over all windows and channels."""
-    return float(np.mean(np.abs(np.array(y_true) - np.array(y_pred))))
+def _stacked(forecast: ForecastOutput):
+    """Return (quantiles (M,Q,H,C), levels (Q,)) — flattening if needed."""
+    if len(forecast.quantiles) != 1:
+        forecast = forecast.flatten()
+    if not forecast.quantiles:
+        raise ValueError("ForecastOutput is empty — no predictions to score")
+    return forecast.quantiles[0], np.asarray(forecast.quantile_levels, dtype=np.float64)
 
 
-def mse(y_true, y_pred):
-    """Mean Squared Error, averaged over all windows and channels."""
-    return float(np.mean((np.array(y_true) - np.array(y_pred)) ** 2))
+def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
+    """Extract (M, H, C) point forecast — median when available, else mean."""
+    quants, levels = _stacked(forecast)
+    if 0.5 in levels:
+        return quants[:, int(np.where(levels == 0.5)[0][0])]
+    return quants.mean(axis=1)
 
 
-def rmse(y_true, y_pred):
-    return float(np.sqrt(mse(y_true, y_pred)))
-
-
-def mase(y_true, y_pred, y_train, seasonality=1):
-    """Mean Absolute Scaled Error.
-
-    Parameters
-    ----------
-    y_true : array-like (M, H, C) or list of (H, C)
-    y_pred : array-like (M, H, C) or list of (H, C)
-    y_train : list of (T_i, C) training series used to compute the naive scale
-    seasonality : int
-        Seasonal period for the naive seasonal baseline (default 1 = random
-        walk baseline).
-    """
-    y_true = np.array(y_true)   # (M, H, C)
-    y_pred = np.array(y_pred)
-
-    # Scale: MAE of seasonal naive on training data
+def _seasonal_naive_scale(y_train, seasonality: int) -> float:
+    """MAE of the seasonal-naive forecast on training series. Used by MASE."""
     scales = []
     for ts in y_train:
-        ts = np.array(ts)  # (T, C)
+        ts = np.asarray(ts)
         if ts.shape[0] > seasonality:
-            naive_err = np.mean(
-                np.abs(ts[seasonality:] - ts[:-seasonality])
-            )
-            scales.append(naive_err)
-    scale = np.mean(scales) if scales else 1.0
-    if scale == 0:
-        scale = 1.0
-
-    return float(np.mean(np.abs(y_true - y_pred)) / scale)
+            scales.append(float(np.mean(np.abs(ts[seasonality:] - ts[:-seasonality]))))
+    scale = float(np.mean(scales)) if scales else 1.0
+    return scale if scale != 0 else 1.0
 
 
-def smape(y_true, y_pred):
+def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarray:
+    """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
+    quants, levels = _stacked(forecast)            # (M,Q,H,C), (Q,)
+    diff = y_true[:, None] - quants                # (M,Q,H,C)
+    levels_b = levels.reshape(1, -1, 1, 1)
+    loss = np.maximum(levels_b * diff, (levels_b - 1.0) * diff)
+    return loss.mean(axis=(0, 2, 3))               # (Q,)
+
+
+# ---------------------------------------------------------------------------
+# Forecasting — point metrics
+# ---------------------------------------------------------------------------
+
+def mae(y_true, forecast: ForecastOutput, **_):
+    """Mean Absolute Error, averaged over all windows, horizons, channels."""
+    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))))
+
+
+def mse(y_true, forecast: ForecastOutput, **_):
+    """Mean Squared Error, averaged over all windows, horizons, channels."""
+    return float(np.mean((y_true - _point_from_forecast(forecast)) ** 2))
+
+
+def rmse(y_true, forecast: ForecastOutput, **_):
+    return float(np.sqrt(mse(y_true, forecast)))
+
+
+def mase(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
+    """Mean Absolute Scaled Error. Scale is naive-seasonal MAE on y_train."""
+    scale = _seasonal_naive_scale(y_train, seasonality)
+    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))) / scale)
+
+
+def smape(y_true, forecast: ForecastOutput, **_):
     """Symmetric Mean Absolute Percentage Error."""
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    y_pred = _point_from_forecast(forecast)
     denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
     denom = np.where(denom == 0, 1.0, denom)
     return float(np.mean(np.abs(y_true - y_pred) / denom))
+
+
+def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
+    """1 - MAE_model / MAE_naive.
+
+    ``MAE_naive`` is the seasonal-naive MAE on the training series (same
+    scale as :func:`mase`), so the score is identical to ``1 - mase``.
+    Positive = better than naive; 0 = parity; negative = worse.
+    """
+    scale = _seasonal_naive_scale(y_train, seasonality)
+    model_mae = float(np.mean(np.abs(y_true - _point_from_forecast(forecast))))
+    return float(1.0 - model_mae / scale)
+
+
+# ---------------------------------------------------------------------------
+# Forecasting — probabilistic metrics
+# ---------------------------------------------------------------------------
+
+def pinball(y_true, forecast: ForecastOutput, **_):
+    """Mean pinball (quantile) loss, averaged over all quantile levels."""
+    return float(_pinball_per_level(y_true, forecast).mean())
+
+
+def crps(y_true, forecast: ForecastOutput, **_):
+    """CRPS approximated by the quantile-score formula: 2 * mean pinball loss.
+
+    Converges to the true CRPS as the quantile grid becomes dense.
+    """
+    return 2.0 * pinball(y_true, forecast)
+
+
+def wql(y_true, forecast: ForecastOutput, **_):
+    """Weighted Quantile Loss (Salinas et al. / Chronos).
+
+    ``WQL = (1/Q) sum_q [ 2 * sum_t pinball_q(y_t) / sum_t |y_t| ]``
+    """
+    _, levels = _stacked(forecast)
+    denom = float(np.sum(np.abs(y_true)))
+    if denom == 0:
+        return float("nan")
+    # _pinball_per_level returns per-level mean; multiply back by N to get sum.
+    n_elem = float(y_true.size)
+    per_level_sum = _pinball_per_level(y_true, forecast) * n_elem
+    return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
+
+
+def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
+    """Mean Coverage Interval Score for a ``(1 - alpha)`` prediction interval.
+
+    ``IS_alpha = (U - L) + (2/alpha)(L - y) 1[y < L] + (2/alpha)(y - U) 1[y > U]``
+
+    The lower / upper bounds are taken from the quantile levels closest to
+    ``alpha/2`` and ``1 - alpha/2``. With the standard Chronos quantile
+    grid (0.1, …, 0.9), an ``alpha=0.05`` request snaps to the 0.1 / 0.9
+    bounds — effectively scoring an 80% PI on its 95% schedule.
+    """
+    quants, levels = _stacked(forecast)
+    li = int(np.argmin(np.abs(levels - alpha / 2.0)))
+    ui = int(np.argmin(np.abs(levels - (1.0 - alpha / 2.0))))
+    lower = quants[:, li]                              # (M, H, C)
+    upper = quants[:, ui]
+    under = np.maximum(0.0, lower - y_true)
+    over = np.maximum(0.0, y_true - upper)
+    score = (upper - lower) + (2.0 / alpha) * (under + over)
+    return float(np.mean(score))
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +352,11 @@ FORECASTING_METRICS = {
     "rmse": rmse,
     "mase": mase,
     "smape": smape,
+    "crps": crps,
+    "wql": wql,
+    "mcis": mcis,
+    "pinball": pinball,
+    "skill_score_ratio": skill_score_ratio,
 }
 
 CLASSIFICATION_METRICS = {

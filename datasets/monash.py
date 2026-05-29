@@ -24,7 +24,8 @@ covariates      : dict                           {static_covars, hist_covars,
                                                   future_covars} — all empty for
                                                   Monash today
 task            : "forecasting"
-metrics         : ["mae", "mse", "mase", "smape"]
+metrics         : ["mae", "mse", "rmse", "mase", "smape",
+                   "crps", "wql", "mcis", "pinball", "skill_score_ratio"]
 prediction_length : int
 freq            : str  (e.g. "Y", "M", "D")
 seasonality     : int  (seasonal period used for MASE)
@@ -141,7 +142,8 @@ class Dataset(BaseDataset):
             cutoff_indexes=cutoff_indexes,
             covariates=Covariates(),
             task="forecasting",
-            metrics=["mae", "mse", "mase", "smape"],
+            metrics=["mae", "mse", "rmse", "mase", "smape",
+                     "crps", "wql", "mcis", "pinball", "skill_score_ratio"],
             prediction_length=pred_len,
             freq=freq,
             seasonality=seasonality,
