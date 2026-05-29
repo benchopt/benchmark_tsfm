@@ -329,30 +329,167 @@ def event_span_iou(y_true, y_pred, iou_threshold=0.5):
     return float(np.mean(f1_scores))
 
 
-def event_class_f1(y_true, y_pred, iou_threshold=0.5):
-    """Micro-F1 over binary class columns on IoU-matched event slots.
+def _match_spans(gt_spans, pr_spans, iou_threshold, matching_strategy):
+    """Match predicted spans to ground-truth spans by 1-D IoU.
 
-    For each predicted span that is IoU-matched to a ground-truth span, we
-    threshold class probabilities at 0.5 and compute micro-F1 over the k
-    binary class columns. Unmatched ground-truth spans count as false negatives
-    for all their active classes.
+    Each ground-truth span and each prediction is matched at most once; pairs
+    whose IoU is below ``iou_threshold`` are discarded so that unmatched and
+    duplicate predictions are left out of the matching.
 
     Parameters
     ----------
-    y_true : List[np.ndarray (N=10, 2+k)]
-    y_pred : List[np.ndarray (N=10, 2+k)]
+    gt_spans : np.ndarray (G, 2+k)
+        Ground-truth spans (cols 0-1 = start/width, cols 2: = class columns).
+    pr_spans : np.ndarray (P, 2+k)
+        Predicted spans, same layout; class columns hold scores in [0, 1].
     iou_threshold : float
+        Minimum IoU to accept a match.
+    matching_strategy : {"greedy", "hungarian"}
+        ``"greedy"`` sorts predictions by descending confidence and assigns
+        each one to its highest-IoU still-free ground-truth span.
+        ``"hungarian"`` solves the maximum-IoU bipartite assignment globally.
 
     Returns
     -------
-    float — micro-F1 over class columns
+    List[Tuple[int, int]]
+        ``(gi, pi)`` index pairs of matched ground-truth and prediction spans.
     """
-    tp_total = fp_total = fn_total = 0
+    G = gt_spans.shape[0]
+    P = pr_spans.shape[0]
+    if G == 0 or P == 0:
+        return []
+
+    # IoU matrix: rows = predictions, cols = ground-truth spans.
+    iou = np.zeros((P, G))
+    for pi in range(P):
+        for gi in range(G):
+            iou[pi, gi] = _span_iou(
+                pr_spans[pi, 0], pr_spans[pi, 1],
+                gt_spans[gi, 0], gt_spans[gi, 1],
+            )
+
+    if matching_strategy == "greedy":
+        # Sort predictions by descending confidence (max class score) so that
+        # the most confident prediction claims its best ground-truth first.
+        order = np.argsort(-pr_spans[:, 2:].max(axis=1))
+        matched_gt = set()
+        pairs = []
+        for pi in order:
+            best_iou = 0.0
+            best_gi = -1
+            for gi in range(G):
+                if gi in matched_gt:
+                    continue
+                if iou[pi, gi] > best_iou:
+                    best_iou = iou[pi, gi]
+                    best_gi = gi
+            # Accept the match only if the best free ground-truth clears the
+            # threshold; the chosen ground-truth is then marked as occupied.
+            if best_gi >= 0 and best_iou >= iou_threshold:
+                matched_gt.add(best_gi)
+                pairs.append((best_gi, pi))
+        return pairs
+
+    if matching_strategy == "hungarian":
+        # Maximum-weight bipartite matching on the IoU matrix (negated for the
+        # minimisation solver), keeping only pairs above the threshold.
+        from scipy.optimize import linear_sum_assignment
+
+        pr_idx, gt_idx = linear_sum_assignment(-iou)
+        return [(int(gi), int(pi)) for pi, gi in zip(pr_idx, gt_idx)
+                if iou[pi, gi] >= iou_threshold]
+
+    raise ValueError(
+        f"Unknown matching_strategy={matching_strategy!r}; "
+        "expected 'greedy' or 'hungarian'."
+    )
+
+
+def _f1_from_class_counts(tp, fp, fn, mode):
+    """Combine per-class TP/FP/FN counts into a single F1 score.
+
+    Parameters
+    ----------
+    tp, fp, fn : np.ndarray (k,)
+        Per-class true-positive, false-positive and false-negative counts.
+    mode : {"micro", "macro"}
+        ``"micro"`` pools counts across classes before computing one F1.
+        ``"macro"`` computes per-class F1 then averages them equally.
+    """
+    if mode == "micro":
+        tp_s, fp_s, fn_s = tp.sum(), fp.sum(), fn.sum()
+        precision = tp_s / (tp_s + fp_s) if (tp_s + fp_s) > 0 else 0.0
+        recall = tp_s / (tp_s + fn_s) if (tp_s + fn_s) > 0 else 0.0
+        if precision + recall > 0:
+            return float(2 * precision * recall / (precision + recall))
+        return 0.0
+
+    if mode == "macro":
+        f1s = []
+        for k in range(len(tp)):
+            denom_p = tp[k] + fp[k]
+            denom_r = tp[k] + fn[k]
+            precision = tp[k] / denom_p if denom_p > 0 else 0.0
+            recall = tp[k] / denom_r if denom_r > 0 else 0.0
+            if precision + recall > 0:
+                f1s.append(2 * precision * recall / (precision + recall))
+            else:
+                f1s.append(0.0)
+        return float(np.mean(f1s)) if f1s else 0.0
+
+    raise ValueError(
+        f"Unknown mode={mode!r}; expected 'micro' or 'macro'."
+    )
+
+
+def event_iou_f1(y_true, y_pred, iou_threshold=0.5,
+                 matching_strategy="greedy", mode="micro"):
+    """F1 over binary class columns on IoU-matched event spans.
+
+    Predicted spans are matched to ground-truth spans by 1-D IoU using the
+    requested strategy. For each matched pair, class probabilities are
+    thresholded at 0.5 and contribute true positives / false positives / false
+    negatives over the k binary class columns. Unmatched ground-truth spans
+    count as false negatives for all their active classes, while unmatched and
+    duplicate predictions count as false positives for all their active
+    classes, so both kinds of error are penalised.
+
+    Parameters
+    ----------
+    y_true : List[np.ndarray (N, 2+k)]
+        Ground-truth padded event targets. All-zero class columns = empty slot.
+    y_pred : List[np.ndarray (N, 2+k)]
+        Predicted outputs. Cols 0-1 = start/width, cols 2: = class scores.
+    iou_threshold : float
+        Minimum IoU to accept a span match (default 0.5).
+    matching_strategy : {"greedy", "hungarian"}
+        Span matching strategy (default "greedy"). See :func:`_match_spans`.
+    mode : {"micro", "macro"}
+        Class-averaging mode for the final F1 (default "micro").
+
+    Returns
+    -------
+    float — class F1 score aggregated over all series.
+    """
+    # Infer the number of class columns from the first 2-D sample available.
+    n_classes = None
+    for arr in list(y_true) + list(y_pred):
+        a = np.asarray(arr)
+        if a.ndim == 2 and a.shape[1] > 2:
+            n_classes = a.shape[1] - 2
+            break
+    if n_classes is None:
+        return float("nan")
+
+    tp = np.zeros(n_classes)
+    fp = np.zeros(n_classes)
+    fn = np.zeros(n_classes)
 
     for gt, pr in zip(y_true, y_pred):
         gt = np.asarray(gt)
         pr = np.asarray(pr)
 
+        # Keep only occupied ground-truth slots and confident predictions.
         gt_mask = gt[:, 2:].sum(axis=1) > 0
         pr_mask = pr[:, 2:].max(axis=1) > 0.5
 
@@ -362,41 +499,31 @@ def event_class_f1(y_true, y_pred, iou_threshold=0.5):
         G = gt_spans.shape[0]
         P = pr_spans.shape[0]
 
-        matched_gt = {}
-        matched_pr = set()
-        for gi in range(G):
-            best_iou = 0.0
-            best_pi = -1
-            for pi in range(P):
-                if pi in matched_pr:
-                    continue
-                iou = _span_iou(
-                    pr_spans[pi, 0], pr_spans[pi, 1],
-                    gt_spans[gi, 0], gt_spans[gi, 1],
-                )
-                if iou > best_iou:
-                    best_iou = iou
-                    best_pi = pi
-            if best_iou >= iou_threshold and best_pi >= 0:
-                matched_gt[gi] = best_pi
-                matched_pr.add(best_pi)
+        pairs = _match_spans(gt_spans, pr_spans, iou_threshold,
+                             matching_strategy)
+        matched_gt = {gi for gi, _ in pairs}
+        matched_pr = {pi for _, pi in pairs}
 
-        for gi, pi in matched_gt.items():
+        # Matched pairs: per-class agreement on the thresholded class columns.
+        for gi, pi in pairs:
             gt_cls = (gt_spans[gi, 2:] > 0.5).astype(int)
             pr_cls = (pr_spans[pi, 2:] > 0.5).astype(int)
-            tp_total += int((gt_cls & pr_cls).sum())
-            fp_total += int(((1 - gt_cls) & pr_cls).sum())
-            fn_total += int((gt_cls & (1 - pr_cls)).sum())
+            tp += gt_cls & pr_cls
+            fp += (1 - gt_cls) & pr_cls
+            fn += gt_cls & (1 - pr_cls)
 
+        # Unmatched ground-truth spans: every active class is a false negative.
         for gi in range(G):
             if gi not in matched_gt:
-                fn_total += int((gt_spans[gi, 2:] > 0.5).sum())
+                fn += (gt_spans[gi, 2:] > 0.5).astype(int)
 
-    precision = tp_total / (tp_total + fp_total) if (tp_total + fp_total) > 0 else 0.0
-    recall = tp_total / (tp_total + fn_total) if (tp_total + fn_total) > 0 else 0.0
-    if precision + recall > 0:
-        return float(2 * precision * recall / (precision + recall))
-    return 0.0
+        # Unmatched / duplicate predictions: every active class is a false
+        # positive (penalty for over-prediction).
+        for pi in range(P):
+            if pi not in matched_pr:
+                fp += (pr_spans[pi, 2:] > 0.5).astype(int)
+
+    return _f1_from_class_counts(tp, fp, fn, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +553,7 @@ AD_METRICS = {
 EVENT_METRICS = {
     "map_iou": map_iou,
     "event_span_iou": event_span_iou,
-    "event_class_f1": event_class_f1,
+    "event_iou_f1": event_iou_f1,
 }
 
 ALL_METRICS = {
