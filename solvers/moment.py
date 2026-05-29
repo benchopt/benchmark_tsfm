@@ -182,9 +182,11 @@ class Solver(BaseSolver):
         "task_config": ["forecasting"],  # forecasting or classification
         "pooler": ["mean"],  # pooler for classification embeddings
         "batch_size": [32],
-        "classifier": ["logistic_regression"],
-        "max_iter": [1000],
-        "n_estimators": [100],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
