@@ -31,6 +31,7 @@ from benchmark_utils.outputs import ForecastOutput
 
 try:
     from momentfm import MOMENTPipeline
+
     HAS_MOMENT = True
 except ImportError:
     HAS_MOMENT = False
@@ -62,12 +63,14 @@ class _MomentForecaster(BaseTSFMAdapter):
             preds_per_series = []
             for cutoff in cutoffs:
                 hist = series[:cutoff]  # (T_cutoff, C)
-                
+
                 if hist.ndim == 1:
                     hist = hist[None, :]
 
                 # Moment expects (B, channels, seq_len)
-                hist_tensor = torch.from_numpy(hist.transpose(1, 0)).unsqueeze(0).float()
+                hist_tensor = (
+                    torch.from_numpy(hist.transpose(1, 0)).unsqueeze(0).float()
+                )
                 device = next(self.pipeline.parameters()).device
                 hist_tensor = hist_tensor.to(device)
                 input_mask = torch.ones(
@@ -105,12 +108,12 @@ class _MomentForecaster(BaseTSFMAdapter):
                     )
 
                 preds_per_series.append(arr)
-            
+
             # Stack predictions: (n_cutoffs, prediction_length, C)
             stacked = np.stack(preds_per_series, axis=0)
             # Add quantile dimension: (n_cutoffs, 1, prediction_length, C)
             quantiles.append(stacked[:, None, :, :])
-        
+
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
 
@@ -122,7 +125,7 @@ class _MomentEncoder(UnpooledEncoder):
 
     def encode(self, X) -> np.ndarray:
         """Extract embeddings from time series data.
-        
+
         Args:
             X: np.ndarray of shape (T, C) or (B, T, C)
 
@@ -133,9 +136,7 @@ class _MomentEncoder(UnpooledEncoder):
         if X.ndim == 2:
             X = X[None]
         elif X.ndim != 3:
-            raise ValueError(
-                f"Unexpected input shape for Moment encoder: {X.shape}"
-            )
+            raise ValueError(f"Unexpected input shape for Moment encoder: {X.shape}")
 
         # Moment expects (B, channels, seq_len)
         X = X.transpose(0, 2, 1)
@@ -151,9 +152,7 @@ class _MomentEncoder(UnpooledEncoder):
             emb = emb.cpu().numpy()
 
         if emb.ndim != 4:
-            raise ValueError(
-                f"Unexpected Moment embedding shape: {emb.shape}"
-            )
+            raise ValueError(f"Unexpected Moment embedding shape: {emb.shape}")
 
         # Moment returns (B, channels, n_patches, D); transform to
         # (B, n_patches, channels, D) for the benchmark encoder API.
@@ -174,7 +173,6 @@ class Solver(BaseSolver):
         "pip::moment @ git+https://github.com/moment-timeseries-foundation-model/moment.git",
     ]
 
-
     sampling_strategy = "run_once"
 
     parameters = {
@@ -182,17 +180,11 @@ class Solver(BaseSolver):
         "task_config": ["forecasting"],  # forecasting or classification
         "pooler": ["mean"],  # pooler for classification embeddings
         "batch_size": [32],
-<<<<<<< HEAD
-        "classifier": ["logistic_regression"],
-        "max_iter": [1000],
-        "n_estimators": [100],
-=======
         "classifier": ["log_reg"],
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
         "n_iterators": [100],
->>>>>>> c573cd85c2b80ced694b62bda534833d5461cee5
     }
 
     def skip(self, task, **kwargs):
@@ -232,8 +224,7 @@ class Solver(BaseSolver):
                 self._pipeline = self._pipeline.to(device)
                 self._loaded_checkpoint = self.checkpoint
                 print(
-                    f"✓ Moment checkpoint loaded: {self.checkpoint} "
-                    f"on device: {device}"
+                    f"✓ Moment checkpoint loaded: {self.checkpoint} on device: {device}"
                 )
             except Exception as e:
                 raise RuntimeError(
