@@ -4,6 +4,9 @@ Supports:
   - forecasting     : zero-shot via Toto2Model
   - classification  : linear probe on pooled transformer patch embeddings
   - anomaly_detection  : forecast-residual on top of the same forecaster
+
+References:
+    https://github.com/datadog/toto
 """
 
 import numpy as np
