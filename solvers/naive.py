@@ -1,8 +1,9 @@
-"""Naive baseline solver — works for all three tasks.
+"""Naive baseline solver — works for all four tasks.
 
 Forecasting      : seasonal naive (repeat last season)
 Classification   : most-frequent-class in training set
 Anomaly detection: constant zero scores (everything is normal)
+Event detection  : predict no events (empty box array)
 
 This solver has no model dependencies and should always pass ``benchopt test``.
 It also serves as a reference for the expected solver structure.
@@ -57,6 +58,16 @@ class _ConstantScorer(BaseTSFMAdapter):
         return np.zeros(x.shape[0], dtype=np.float32)
 
 
+class _NoEventPredictor(BaseTSFMAdapter):
+    """Predict no events — returns an empty (0, 2+K) box array."""
+
+    def __init__(self, n_classes):
+        self._n_classes = n_classes
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return np.zeros((0, 2 + self._n_classes), dtype=np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Solver
 # ---------------------------------------------------------------------------
@@ -79,7 +90,8 @@ class Solver(BaseSolver):
         "seasonality": [1],
     }
 
-    SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
+    SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection",
+                       "event_detection"}
 
     def skip(self, task, **kwargs):
         if task not in self.SUPPORTED_TASKS:
@@ -103,6 +115,9 @@ class Solver(BaseSolver):
 
         elif self.task == "anomaly_detection":
             self._adapter = _ConstantScorer()
+
+        elif self.task == "event_detection":
+            self._adapter = _NoEventPredictor(self.meta.get("n_classes", 1))
 
     def get_result(self):
         return {"model": self._adapter}

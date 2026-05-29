@@ -14,6 +14,9 @@ Adding a new task
 1. Add the task name to ``SUPPORTED_TASKS``.
 2. In ``run``, instantiate the appropriate adapter from
    ``benchmark_utils.adapters`` (or implement a new one there).
+
+References:
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
@@ -42,7 +45,6 @@ class _ChronosForecaster:
         self._median_idx = list(pipeline.quantiles).index(0.5)
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-
         # Chronos expects (batch, C, time) tensors.
         x = np.asarray(x, dtype=np.float32).T[None]  # (N, C, T)
 
