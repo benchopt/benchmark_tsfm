@@ -16,7 +16,7 @@ from benchopt import BaseDataset
 class Dataset(BaseDataset):
 
     # Name to select the dataset in the CLI and to display the results.
-    name = "bci"
+    name = "BNCI2014_001"
 
     requirements = [
         'braindecode==1.5.1', 'moabb==1.5.0',
@@ -24,7 +24,7 @@ class Dataset(BaseDataset):
 
     parameters = {
         'train_ratio': [0.8],
-        'debug': [True],
+        'debug': [False],
         'seed': [42],
     }
 

@@ -89,11 +89,10 @@ class Dataset(BaseDataset):
     parameters = {
         "seed": [42],
         "train_ratio": [0.8],
-        "debug": [True],
+        "debug": [False],
     }
 
-    def get_data(self):
-
+    def prepare(self):
         # Allow reuse of the download helper from benchmark_ad if present,
         # otherwise fall back to the data path directly.
         sub_ids = range(1, 83)
@@ -146,6 +145,13 @@ class Dataset(BaseDataset):
         y_test = np.concatenate(
             [y_all[i] for i in range(len(y_all)) if i not in ids_train]
         )
+
+        return X_train, y_train, X_test, y_test
+
+    def get_data(self):
+
+        X_train, y_train, X_test, y_test = self.prepare()
+
         return dict(
             X_train=X_train,
             y_train=y_train,
