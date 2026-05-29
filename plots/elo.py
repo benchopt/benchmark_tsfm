@@ -135,86 +135,24 @@ def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
     return out
 
 
-# ---------------------------------------------------------------------------
-# Cell-level HTML helpers
-# ---------------------------------------------------------------------------
-
-# Tailwind-ish colours readable on white: amber-600 for the low bound,
-# emerald-600 for the high bound. The user asked specifically for yellow/green;
-# these are the darkest defensible shades that remain legible.
-_LOW_COLOUR = "#ca8a04"
-_HIGH_COLOUR = "#16a34a"
-
-
-def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
-    """HTML cell rendering the Elo point estimate over the CI deltas."""
-    low_delta = ci_low - elo     # negative
-    high_delta = ci_high - elo   # positive
-    return (
-        f'<div style="line-height:1.25">'
-        f'<div style="font-weight:600">{elo:.0f}</div>'
-        f'<div style="font-size:0.85em">'
-        f'<span style="color:{_LOW_COLOUR}">{low_delta:+.0f}</span>&nbsp;'
-        f'<span style="color:{_HIGH_COLOUR}">{high_delta:+.0f}</span>'
-        f'</div></div>'
-    )
-
-
-# Click-to-sort: benchopt's renderer uses `th.innerText` so we can't attach
-# `onclick` via the columns list. We side-channel through a hidden <img> in
-# the first body cell; its `onerror` fires once the row is in the DOM and
-# wires up click handlers on every <th>. The script also re-fires when
-# benchopt re-renders the table (precision toggle, metric change).
-_SORT_INJECT_HTML = (
-    '<img src="" style="display:none" onerror="'
-    # Defer until benchopt finishes appending the table to #table_container.
-    # The onerror fires while the <td> is still being parsed (no table in DOM
-    # yet); a small setTimeout punts past the rest of renderTable().
-    "setTimeout(function(){"
-    "var t=document.querySelector(&quot;#table_container table&quot;);"
-    "if(!t)return;"
-    "t.querySelectorAll(&quot;th&quot;).forEach(function(th,i){"
-    "th.style.cursor=&quot;pointer&quot;;"
-    "th.title=&quot;Click to sort&quot;;"
-    "th.onclick=function(){"
-    "var tbody=t.querySelector(&quot;tbody&quot;);"
-    "var rows=Array.from(tbody.querySelectorAll(&quot;tr&quot;));"
-    "var asc=!th._asc;th._asc=asc;"
-    "rows.sort(function(a,b){"
-    "var av=a.children[i].textContent.trim();"
-    "var bv=b.children[i].textContent.trim();"
-    "var an=parseFloat(av),bn=parseFloat(bv);"
-    "if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;"
-    "return asc?av.localeCompare(bv):bv.localeCompare(av);"
-    "});"
-    "rows.forEach(function(r){tbody.appendChild(r);});"
-    "};"
-    "});"
-    "},50);"
-    '">'
-)
-
-
 class Plot(BasePlot):
-    """Elo leaderboard with bootstrap 95% CI — as a benchopt table.
+    """Elo leaderboard with bootstrap 95% CI — as a benchopt bar chart.
 
     Appears in the HTML report's "Chart type" dropdown. ``objective_column``
     is auto-populated with every numeric ``objective_*`` column in the
-    parquet, switching the leaderboard in place.
+    parquet, switching the chart in place.
 
-    Column layout
-    -------------
-    - **Solver** — the solver name (stripped of benchopt parameter bracket).
-    - **Elo** — point estimate (top) with the signed delta to the 95% CI
-      bounds underneath: yellow ``−low`` and green ``+high``.
-    - **Games** — total number of pairwise games played by each solver
-      (= ``(k − 1) · N`` for ``k`` solvers and ``N`` datasets).
+    Visual encoding
+    ---------------
+    Benchopt's bar_chart uses ``median(y)`` as the bar height and renders the
+    individual ``y`` values as scatter points on top. We exploit that by
+    passing ``y = [ci_low, elo, ci_high]`` per solver:
 
-    Sorting
-    -------
-    Default order is Elo descending. Every column header is clickable to
-    re-sort in place; numeric columns sort numerically (parsing the leading
-    Elo value out of the multi-line cell), string columns lexicographically.
+      • The bar reaches the Elo **point estimate** (the median of those three).
+      • Two extra dots appear at the bootstrap 95% **CI bounds**, giving the
+        candle-style low/high markers the user asked for.
+
+    Bars are sorted by Elo descending so the leader sits at the left.
 
     Direction
     ---------
@@ -224,7 +162,7 @@ class Plot(BasePlot):
     """
 
     name = "Elo"
-    type = "table"
+    type = "bar_chart"
     options = {
         "objective_column": ...,
     }
@@ -245,30 +183,30 @@ class Plot(BasePlot):
 
         k, n = pivot.shape
         if k < 2 or n < 2:
-            return [["(insufficient data — need ≥2 solvers and ≥2 complete datasets)",
-                     "—", "—"]]
+            return [{"y": [0.0], "label": "(insufficient data)", "text": ""}]
 
         table = _elo_table(pivot)
-        rows = []
-        for idx, row in enumerate(table.itertuples(index=False)):
-            elo_html = _elo_cell(row.elo, row.ci_low, row.ci_high)
-            # Inject the click-to-sort wiring into the very first cell of
-            # the first body row. innerHTML doesn't execute <script> tags,
-            # but it does execute attribute event handlers — hence <img onerror>.
-            solver_cell = (_SORT_INJECT_HTML + row.solver) if idx == 0 else row.solver
-            rows.append([
-                solver_cell,
-                elo_html,
-                str(int(row.games)),  # str to bypass benchopt's .toFixed()
-            ])
-        return rows
+        bars = []
+        for row in table.itertuples(index=False):
+            bars.append({
+                # y = [ci_low, elo, ci_high] → bar height = median = elo,
+                # benchopt renders the individual values as horizontal
+                # line-ew-open markers (the "candle" low/elo/high ticks).
+                # `text` must be empty for those markers to render — see
+                # benchopt/plotting/html/static/result.js:185-204.
+                "y": [row.ci_low, row.elo, row.ci_high],
+                "label": row.solver,
+                "text": "",
+                **self.get_style(row.solver),
+            })
+        return bars
 
     def get_metadata(self, df, objective_column):
         return {
             "title": (
                 f"Elo leaderboard — {objective_column} "
                 f"(lower better, bootstrap N={N_BOOTSTRAP}, mean anchored at "
-                f"{ELO_ANCHOR:.0f}). Click any column header to sort."
+                f"{ELO_ANCHOR:.0f}). Bar = Elo; dots = 95% CI low / high."
             ),
-            "columns": ["Solver", "Elo", "Games"],
+            "ylabel": "Elo",
         }
