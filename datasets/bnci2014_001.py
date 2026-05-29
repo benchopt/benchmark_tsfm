@@ -66,6 +66,10 @@ class Dataset(BaseDataset):
         sfreq = dataset.datasets[0].raw.info["sfreq"]
 
         assert all([ds.raw.info["sfreq"] == sfreq for ds in dataset.datasets])
+
+        # Extract channels names
+        ch_names = dataset.datasets[0].raw.ch_names
+
         # Calculate the trial start offset in samples.
         trial_start_offset_samples = int(trial_start_offset_seconds * sfreq)
 
@@ -117,4 +121,6 @@ class Dataset(BaseDataset):
             task="classification",
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
             n_classes=len(np.unique(y_train)),
+            freq=sfreq,
+            ch_names=ch_names
         )
