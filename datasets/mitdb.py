@@ -21,7 +21,7 @@ y_train : List[np.ndarray (N, 2+K)]     one row per beat event, zero-padded
 X_test  : List[np.ndarray (T_j, 2)]      test portions
 y_test  : List[np.ndarray (N, 2+K)]     same format, same N
 task    : "event_detection"
-metrics : ["map_iou"]
+metrics : ["event_span_iou", "event_iou_f1"]
 extra   : n_classes (int)  K above
 """
 
@@ -204,6 +204,6 @@ class Dataset(BaseDataset):
             X_test=X_test,
             y_test=_pad(y_test),
             task="event_detection",
-            metrics=["map_iou"],
+            metrics=["event_span_iou", "event_iou_f1"],
             n_classes=self.n_classes,
         )
