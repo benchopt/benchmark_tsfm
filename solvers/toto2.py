@@ -1,16 +1,17 @@
-"""Toto-2.0 solver for zero-shot forecasting and anomaly detection.
+"""Toto-2.0 solver for the TSFM benchmark (local inference).
 
-The benchmark objective expects solvers to return an adapter exposing
-``predict(x: np.ndarray (T, C)) -> np.ndarray (H, C)``.  Toto-2.0 forecasts
-quantiles for tensors shaped ``(batch, n_variates, time_steps)``; this solver
-uses the median quantile as the point forecast.
+Supports:
+  - forecasting     : zero-shot via Toto2Model
+  - anomaly_detection  : forecast-residual on top of the same forecaster
 """
 
-from benchopt import BaseSolver
 import numpy as np
+from benchopt import BaseSolver
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
 
 
 SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
@@ -21,7 +22,9 @@ SUPPORTED_TASKS = {"forecasting", "anomaly_detection"}
 # ---------------------------------------------------------------------------
 
 class _Toto2Forecaster(BaseTSFMAdapter):
-    """Wraps Toto2Model to expose predict(x (T, C)) -> (H, C)."""
+    """Toto2Model adapter for the forecasting contract."""
+
+    quantile_levels = tuple(float(q) / 10 for q in range(1, 10))
 
     def __init__(
         self,
@@ -39,12 +42,10 @@ class _Toto2Forecaster(BaseTSFMAdapter):
         self.decode_block_size = decode_block_size
         self.patch_size = patch_size
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
+    def _forecast_context(self, context: np.ndarray) -> np.ndarray:
         import torch
 
-        x = np.asarray(x, dtype=np.float32)
-        if x.ndim == 1:
-            x = x[:, None]
+        x = np.asarray(context, dtype=np.float32)
         if self.context_length is not None:
             x = x[-self.context_length:]
 
@@ -93,10 +94,35 @@ class _Toto2Forecaster(BaseTSFMAdapter):
                 has_missing_values=has_missing_values,
             )
 
-        # Quantiles are documented as (9, batch, n_variates, horizon)
-        # Median forecast at quantile level 0.5
-        median = quantiles[4, 0].detach().float().cpu().numpy()
-        return np.swapaxes(median, 0, 1).astype(np.float32)
+        return quantiles[:, 0].detach().float().cpu().numpy().transpose(0, 2, 1)
+
+    def predict(self, x: ForecastInput) -> ForecastOutput:
+        per_series = []
+
+        for series, cutoffs in zip(x.x, x.cutoff_indexes):
+            series = np.asarray(series, dtype=np.float32)
+            if series.ndim == 1:
+                series = series[:, None]
+
+            C = series.shape[1]
+            forecasts = np.empty(
+                (
+                    len(cutoffs),
+                    len(self.quantile_levels),
+                    self.prediction_length,
+                    C,
+                ),
+                dtype=np.float32,
+            )
+            for cutoff_idx, cutoff in enumerate(cutoffs):
+                forecasts[cutoff_idx] = self._forecast_context(series[:cutoff])
+
+            per_series.append(forecasts)
+
+        return ForecastOutput(
+            quantiles=per_series,
+            quantile_levels=self.quantile_levels,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +163,11 @@ class Solver(BaseSolver):
         self._device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        if not hasattr(self, "_model") or self._loaded_checkpoint != self.checkpoint:
+        should_reload = (
+            not hasattr(self, "_model")
+            or self._loaded_checkpoint != self.checkpoint
+        )
+        if should_reload:
             self._model = Toto2Model.from_pretrained(self.checkpoint)
             self._model = self._model.to(self._device).eval()
             self._loaded_checkpoint = self.checkpoint
