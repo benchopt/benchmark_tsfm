@@ -123,9 +123,129 @@ def prepare_matrix(df: pd.DataFrame, metric: str, top_k: int | None = None,
     return complete, ", ".join(note_parts)
 
 
+GLOBAL_KEY = "global"
+
+
+def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
+    """Render the global CD diagram across every numeric ``objective_*`` metric.
+
+    For each metric we build per-dataset ranks (respecting HIGHER_IS_BETTER),
+    intersect the solver set across metrics, then concatenate the (k × N_metric)
+    rank matrices along axis 1. Each (metric, dataset) pair becomes one
+    Friedman "block" of size k. Mean rank per solver, Nemenyi pairwise p-values,
+    and the Demšar CD overlay are computed on that stacked rank matrix.
+    """
+    metrics = discover_metrics(df)
+    if not metrics:
+        ax.text(0.5, 0.5, "global\nno objective_* columns",
+                ha="center", va="center", fontsize=10)
+        ax.axis("off")
+        return "global: no metrics"
+
+    per_metric_ranks: list[pd.DataFrame] = []
+    used_metrics: list[str] = []
+    for metric in metrics:
+        sub = df[["solver_name", "dataset_name", metric]].dropna(subset=[metric])
+        if sub.empty:
+            continue
+        mat, _note = prepare_matrix(sub, metric, top_k=None)
+        if mat.shape[0] < 2 or mat.shape[1] < 1:
+            continue
+        # Higher-is-better → negate so rank 1 == best in both regimes
+        rank_input = -mat if metric in HIGHER_IS_BETTER else mat
+        ranks_arr = np.vstack([
+            rankdata(rank_input[c].values, method="average")
+            for c in rank_input.columns
+        ]).T
+        ranks = pd.DataFrame(
+            ranks_arr, index=mat.index,
+            columns=[f"{metric}|{c}" for c in mat.columns],
+        )
+        per_metric_ranks.append(ranks)
+        used_metrics.append(metric)
+
+    if not per_metric_ranks:
+        ax.text(0.5, 0.5, "global\nno usable metrics", ha="center",
+                va="center", fontsize=10)
+        ax.axis("off")
+        return "global: no usable metrics"
+
+    # Intersect solvers across all metrics so the stacked block matrix is
+    # complete — Friedman requires complete blocks.
+    common = set(per_metric_ranks[0].index)
+    for r in per_metric_ranks[1:]:
+        common &= set(r.index)
+    common_sorted = sorted(common)
+
+    if len(common_sorted) < 3:
+        ax.text(0.5, 0.5,
+                f"global\nonly {len(common_sorted)} solvers shared\n"
+                f"across {len(used_metrics)} metrics",
+                ha="center", va="center", fontsize=9)
+        ax.axis("off")
+        return f"global: only {len(common_sorted)} solvers in common"
+
+    stacked = pd.concat([r.loc[common_sorted] for r in per_metric_ranks], axis=1)
+    k, n_blocks = stacked.shape
+
+    mean_ranks = stacked.mean(axis=1)
+    mean_ranks.index = [short_solver(s) for s in mean_ranks.index]
+
+    # Friedman on the stacked ranks. friedmanchisquare ranks within each
+    # block; since we already supplied per-block ranks, the re-ranking is a
+    # no-op (in expectation) and the chi^2 statistic comes out the same as
+    # plugging into the closed-form formula.
+    chi2, pval = friedmanchisquare(*[stacked.iloc[i].values for i in range(k)])
+
+    sig = sp.posthoc_nemenyi_friedman(stacked.T.values)
+    sig.index = mean_ranks.index
+    sig.columns = mean_ranks.index
+
+    q_alpha = studentized_range.ppf(1.0 - alpha, k, np.inf) / math.sqrt(2.0)
+    cd = q_alpha * math.sqrt(k * (k + 1) / (6.0 * n_blocks))
+
+    plt.sca(ax)
+    sp.critical_difference_diagram(
+        ranks=mean_ranks, sig_matrix=sig, ax=ax, alpha=alpha,
+        text_h_margin=0.005,
+    )
+
+    # Same CD-bar overlay as the per-metric path
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    extra = 0.18 * (y_max - y_min)
+    ax.set_ylim(y_min, y_max + extra)
+    y_min, y_max = ax.get_ylim()
+    bar_y   = y_max - 0.04 * (y_max - y_min)
+    tick_h  = 0.015 * (y_max - y_min)
+    bar_x0  = x_min + 0.03 * (x_max - x_min)
+    bar_x1  = bar_x0 + cd
+    cd_colour = "#555555"
+    ax.plot([bar_x0, bar_x1], [bar_y, bar_y],
+            color=cd_colour, linewidth=1.5, solid_capstyle="butt", zorder=5)
+    for x in (bar_x0, bar_x1):
+        ax.plot([x, x], [bar_y - tick_h, bar_y + tick_h],
+                color=cd_colour, linewidth=1.5, zorder=5)
+    ax.text((bar_x0 + bar_x1) / 2, bar_y + 2 * tick_h,
+            f"CD={cd:.2f}", ha="center", va="bottom",
+            fontsize=7, color=cd_colour, zorder=5)
+
+    ax.set_title(
+        f"CD diagram — GLOBAL "
+        f"(avg rank across {len(used_metrics)} metrics, "
+        f"{n_blocks} blocks, k={k})",
+        fontsize=10,
+    )
+    return (f"global: k={k} blocks={n_blocks} "
+            f"chi2={chi2:.2f} p={pval:.2e} CD={cd:.3f}")
+
+
 def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
                   alpha: float = 0.05, top_k: int | None = None) -> str:
     """Render a CD diagram on `ax`. Returns a one-line status for stdout."""
+    if metric == GLOBAL_KEY:
+        return _cd_global(df, ax, alpha=alpha)
+
     sub = df[["solver_name", "dataset_name", metric]].dropna(subset=[metric])
     if sub.empty:
         ax.text(0.5, 0.5, f"{metric}\nno data", ha="center", va="center",
@@ -292,7 +412,9 @@ class Plot(BasePlot):
 
     Appears in the HTML report's "Chart type" dropdown. The
     ``objective_column`` option is auto-populated with every ``objective_*``
-    column found in the parquet, switching the diagram in place.
+    column found in the parquet, plus a virtual ``"global"`` entry that
+    averages per-dataset ranks across **all** metrics and runs Friedman +
+    Nemenyi on the stacked block matrix.
     """
 
     name = "Critical Difference Diagram"
@@ -301,16 +423,37 @@ class Plot(BasePlot):
         "objective_column": ...,
     }
 
+    def _get_all_plots(self, df):
+        # Let benchopt do the standard ``...`` expansion first, then append
+        # a synthetic "global" objective_column that the dropdown can select.
+        # Both the options list (read by the HTML sidebar) and the plots dict
+        # (looked up by `<plot_name>_<value>`) get the extra entry.
+        plots, options = super()._get_all_plots(df)
+        opts = list(options.get("objective_column", []))
+        if GLOBAL_KEY in opts:
+            return plots, options
+        opts.append(GLOBAL_KEY)
+        options["objective_column"] = opts
+
+        data = self.get_metadata(df, objective_column=GLOBAL_KEY)
+        data["type"] = self.type
+        data["data"] = self.plot(df, objective_column=GLOBAL_KEY)
+        key = "_".join([self._get_name(), GLOBAL_KEY])
+        plots[key] = data
+        return plots, options
+
     def plot(self, df, objective_column):
         fig, ax = plt.subplots(figsize=(10, 5))
         cd_for_metric(df, objective_column, ax)
         return [{"image": _fig_to_array(fig), "label": objective_column}]
 
     def get_metadata(self, df, objective_column):
-        return {
-            "title": f"Critical Difference Diagram — {objective_column}",
-            "ncols": 1,
-        }
+        if objective_column == GLOBAL_KEY:
+            title = ("Critical Difference Diagram — global "
+                     "(mean rank across every objective_* metric)")
+        else:
+            title = f"Critical Difference Diagram — {objective_column}"
+        return {"title": title, "ncols": 1}
 
 
 if __name__ == "__main__":
