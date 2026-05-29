@@ -328,6 +328,34 @@ def precompute_embeddings(pipeline, X_train):
     return Z_train
 
 
+def _pad_or_truncate_labels(y: np.ndarray, num_queries: int) -> np.ndarray:
+    """Pad or truncate a label array to exactly ``num_queries`` rows.
+
+    Parameters
+    ----------
+    y : (N, 2+k) float array
+        Raw event labels for one series.  ``N`` may be smaller or larger
+        than ``num_queries``.
+    num_queries : int
+        Target number of event slots.
+
+    Returns
+    -------
+    (num_queries, 2+k) float32 array
+        Rows beyond the original ``N`` are filled with zeros (no-event).
+        Rows beyond ``num_queries`` in the original are discarded.
+    """
+    y = np.asarray(y, dtype=np.float32)
+    N, width = y.shape
+    if N == num_queries:
+        return y
+    if N > num_queries:
+        return y[:num_queries]
+    # N < num_queries — pad with zero rows
+    pad = np.zeros((num_queries - N, width), dtype=np.float32)
+    return np.concatenate([y, pad], axis=0)
+
+
 def fit_event_head(
     Z_train,
     y_train,
@@ -341,6 +369,7 @@ def fit_event_head(
     warmup_epochs=5,
     num_dec_layers=2,
     lambda_cls=1.0,
+    num_queries=10,
 ):
     """Train an EventHead on pre-computed Chronos embeddings.
 
@@ -348,8 +377,10 @@ def fit_event_head(
     ----------
     Z_train : List[torch.Tensor (T_tok, D)]
         Pre-computed encoder embeddings (CPU), one per training series.
-    y_train : List[np.ndarray (N, 2+k)]
-        Padded event targets, one per training series.
+    y_train : List[np.ndarray (N_i, 2+k)]
+        Event targets, one per training series.  ``N_i`` may differ across
+        series and need not equal ``num_queries``; labels are automatically
+        padded (with zeros) or truncated to ``num_queries`` rows.
     n_classes : int
         Number of binary class columns k.
     d_model : int
@@ -363,15 +394,20 @@ def fit_event_head(
         Transformer decoder depth.
     lambda_cls : float
         Weight of the classification loss relative to the position loss.
+    num_queries : int
+        Number of event slots (decoder queries); default 10.
 
     Returns
     -------
     EventHead  — trained, in eval mode, on ``device``.
     """
+    # Normalise all labels to (num_queries, 2+k) once, before the training loop
+    y_train = [_pad_or_truncate_labels(y, num_queries) for y in y_train]
+
     head = EventHead(
         d_model=d_model,
         n_classes=n_classes,
-        num_queries=10,
+        num_queries=num_queries,
         num_decoder_layers=num_dec_layers,
         nhead=8,
     ).to(device)

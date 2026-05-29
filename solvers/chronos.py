@@ -190,6 +190,7 @@ class Solver(BaseTSFMSolver):
         "warmup_epochs": [5],
         "num_dec_layers": [2],
         "lambda_cls": [1.0],
+        "num_queries": [10],
     }
 
     def __init__(
@@ -205,6 +206,7 @@ class Solver(BaseTSFMSolver):
         warmup_epochs=5,
         num_dec_layers=2,
         lambda_cls=1.0,
+        num_queries=10,
     ):
         """Initialize Chronos-specific state.
 
@@ -231,6 +233,7 @@ class Solver(BaseTSFMSolver):
             warmup_epochs=warmup_epochs,
             num_dec_layers=num_dec_layers,
             lambda_cls=lambda_cls,
+            num_queries=num_queries,
         )
         self._pipeline = None
         self._loaded_model = None
@@ -334,7 +337,7 @@ class Solver(BaseTSFMSolver):
                 self._Z_train, self.y_train, self._n_classes, self._d_model,
                 device, self.batch_size, self.num_epochs, self.lr,
                 self.weight_decay, self.warmup_epochs, self.num_dec_layers,
-                self.lambda_cls,
+                self.lambda_cls, self.num_queries,
             )
             return ChronosEventAdapter(model, head, device, self._n_classes)
 
