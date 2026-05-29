@@ -92,13 +92,19 @@ your native runs.
 
 ---
 
-## `plot_cd_grid.py` — Critical Difference diagrams per metric
+## `plots/plot_cd_grid.py` — Critical Difference diagrams per metric
 
-Renders a Demšar (2006) Critical Difference diagram for every
-`objective_*` numeric column in a benchopt-schema parquet, arranged into a
-single PNG grid. Uses `scipy.stats.friedmanchisquare` +
-`scikit_posthocs.posthoc_nemenyi_friedman` +
-`scikit_posthocs.critical_difference_diagram` under the hood.
+Two front-ends share the same Demšar (2006) computation:
+
+1. **CLI** — bundles every numeric `objective_*` column into a single
+   subplot grid PNG (commands below).
+2. **benchopt custom plot** — appears under the "Chart type" dropdown of the
+   per-run HTML page (`benchopt plot . --html`). The `objective_column`
+   selector switches metrics in place. No extra steps required — benchopt
+   discovers the file because it lives in `plots/`.
+
+Uses `scipy.stats.friedmanchisquare` + `scikit_posthocs.posthoc_nemenyi_friedman`
++ `scikit_posthocs.critical_difference_diagram` under the hood.
 
 ### Usage
 

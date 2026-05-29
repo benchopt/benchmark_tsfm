@@ -1,17 +1,28 @@
-"""Render a grid of CD diagrams — one subplot per objective_* metric — for a
-benchopt-schema parquet, and save it as a single PNG.
+"""Critical Difference diagrams for a benchopt-schema parquet.
 
-Uses scikit_posthocs.critical_difference_diagram for the drawing, keeps only
-the minimal preprocessing logic (pivot, biclique trim for sparse benchmarks).
+Two front-ends share the same Demšar (2006) computation:
 
-Usage:
-    python scripts/plot_cd_grid.py <parquet> [--out PATH] [--filter QUERY]
-                                  [--ncols N] [--top-k N]
+1. **CLI** — bundles every numeric ``objective_*`` column into a single
+   subplot grid PNG. Run from the repo root::
+
+       python plots/plot_cd_grid.py <parquet> [--out PATH] [--filter QUERY]
+                                    [--ncols N] [--top-k N]
+
+2. **benchopt custom plot** — the ``Plot`` class at the bottom of this file
+   makes the CD diagram appear under the "Chart type" dropdown of the
+   benchopt HTML report (``benchopt plot . --html``). One subplot per
+   metric, switched via the ``objective_column`` selector.
+
+Uses ``scipy.stats.friedmanchisquare`` + ``scikit_posthocs.posthoc_nemenyi_friedman``
++ ``scikit_posthocs.critical_difference_diagram``. For k>30 the critical
+difference is computed from ``scipy.stats.studentized_range`` instead of
+the tabulated Demšar values.
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import math
 import re
 import sys
@@ -24,6 +35,8 @@ import numpy as np
 import pandas as pd
 import scikit_posthocs as sp
 from scipy.stats import friedmanchisquare, rankdata, studentized_range
+
+from benchopt import BasePlot
 
 
 def short_solver(name: str) -> str:
@@ -218,6 +231,55 @@ def main() -> int:
     plt.close(fig)
     print(f"\nWrote {out}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# benchopt custom plot — picks up the same CD computation via the "Chart type"
+# dropdown in the HTML report. One subplot per objective_* metric, selectable
+# from the sidebar.
+# ---------------------------------------------------------------------------
+
+def _fig_to_array(fig) -> np.ndarray:
+    """Render a matplotlib Figure to a (H, W, 3) float array in [0, 1].
+
+    benchopt's image plot backend (`benchopt.plotting.image_utils._array_to_png_src`)
+    requires a numpy/array-API object with values in [0, 1]; string data URIs
+    are rejected despite what the docs imply.
+    """
+    from PIL import Image
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    return np.asarray(img, dtype=np.float32) / 255.0
+
+
+class Plot(BasePlot):
+    """Critical Difference Diagram as a benchopt-native custom plot.
+
+    Appears in the HTML report's "Chart type" dropdown. The
+    ``objective_column`` option is auto-populated with every ``objective_*``
+    column found in the parquet, switching the diagram in place.
+    """
+
+    name = "Critical Difference Diagram"
+    type = "image"
+    options = {
+        "objective_column": ...,
+    }
+
+    def plot(self, df, objective_column):
+        fig, ax = plt.subplots(figsize=(10, 5))
+        cd_for_metric(df, objective_column, ax)
+        return [{"image": _fig_to_array(fig), "label": objective_column}]
+
+    def get_metadata(self, df, objective_column):
+        return {
+            "title": f"Critical Difference Diagram — {objective_column}",
+            "ncols": 1,
+        }
 
 
 if __name__ == "__main__":
