@@ -1,8 +1,8 @@
 """
 Unified objective for the TSFM benchmark.
 
-Supports three tasks — forecasting, classification, anomaly detection —
-dispatched via the ``task`` field provided by each dataset.
+Supports four tasks — forecasting, classification, anomaly detection, and
+event detection — dispatched via the ``task`` field provided by each dataset.
 
 Data contract
 -------------
@@ -35,9 +35,15 @@ classification     y_train  (N,) int
                    extra    n_classes (int)
 anomaly_detection  y_train  None
                    y_test   List[(T_j,)] int  point-level binary labels
-event_detection    y_train  List[(N_i, 2+K)] float  object-detection boxes
-                   y_test   List[(N_j, 2+K)] float  object-detection boxes
-                   extra    n_classes (int)
+event_detection    y_train  List[(N, 2+K)] float  object-detection boxes,
+                                                  zero-padded to uniform N
+                   y_test   List[(N, 2+K)] float  same format, same N
+                   extra    n_classes (int), T (int, default 512)
+
+                   Each row of the (N, 2+k) array is one event slot:
+                     col 0   : start,  normalised to [0, 1] over T
+                     col 1   : length, normalised to [0, 1] over T
+                     col 2.. : k binary class columns (all-zero row = empty slot)
 
 Solver contract
 ---------------
@@ -169,17 +175,6 @@ class Objective(BaseObjective):
             result[name] = ALL_METRICS[name](y_true, y_pred)
         return result
 
-    # --- event detection -----------------------------------------------
-
-    def _eval_event_detection(self, model):
-        # model.predict returns (N, 2+K) float array per series
-        preds = [np.asarray(model.predict(x)) for x in self.X_test]
-
-        result = {}
-        for name in self.metrics:
-            result[name] = ALL_METRICS[name](self.y_test, preds)
-        return result
-
     # --- anomaly detection ---------------------------------------------
 
     def _eval_anomaly_detection(self, model):
@@ -189,6 +184,25 @@ class Objective(BaseObjective):
         result = {}
         for name in self.metrics:
             result[name] = ALL_METRICS[name](self.y_test, scores)
+        return result
+
+    # --- event detection -----------------------------------------------
+
+    def _eval_event_detection(self, model):
+        """Evaluate event detection.
+
+        model.predict(x) must return (N, 2+k) float array per series:
+          col 0   : predicted start  in [0, 1]
+          col 1   : predicted length in [0, 1]
+          col 2.. : binary class probabilities / scores in [0, 1]
+
+        y_test is a List of (N, 2+k) event arrays (variable or padded).
+        """
+        preds = [np.asarray(model.predict(x)) for x in self.X_test]
+
+        result = {}
+        for name in self.metrics:
+            result[name] = ALL_METRICS[name](self.y_test, preds)
         return result
 
     # ------------------------------------------------------------------
