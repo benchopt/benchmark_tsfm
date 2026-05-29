@@ -56,6 +56,9 @@ def _load_subject(sub_id, preprocessors, window_size_samples):
     item access is unavailable in the installed braindecode version."""
     dataset = HGD(subject_ids=[sub_id])
     preprocess(dataset, preprocessors)
+    raw = dataset.datasets[0].raw
+    sfreq = raw.info["sfreq"]
+    ch_names = raw.ch_names
 
     windows_dataset = create_windows_from_events(
         dataset,
@@ -82,7 +85,7 @@ def _load_subject(sub_id, preprocessors, window_size_samples):
             X_.append(window)
             y_.append(label)
 
-    return X_, y_
+    return X_, y_, sfreq, ch_names
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +119,7 @@ class Dataset(BaseDataset):
 
     name = "HGD"
 
-    requirements = ["pip::moabb", "pandas", "braindecode==1.5.1"]
+    requirements = ["pip::moabb", "pandas", "pip::braindecode==1.5.1"]
 
     parameters = {
         "seed":                [42],
@@ -148,11 +151,16 @@ class Dataset(BaseDataset):
 
         # Collect per-subject (train, test) pairs
         X_all, y_all = [], []
+        sfreq_ref, ch_names_ref = None, None
 
         for sub_id in sub_ids:
-            X_, y_ = _load_subject(
+            X_, y_, sfreq, ch_names = _load_subject(
                 sub_id, preprocessors, self.window_size_samples
             )
+            if sfreq_ref is None:
+                sfreq_ref, ch_names_ref = sfreq_ref, ch_names
+            else:
+                assert sfreq == sfreq_ref and ch_names == ch_names_ref, f"Inconsistent meta for sub {sub_id}"
             X_all.append(X_)
             y_all.append(y_)
 
@@ -189,4 +197,6 @@ class Dataset(BaseDataset):
             task="classification",
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
             n_classes=4,
+            freq=sfreq_ref,
+            ch_names=ch_names_ref
         )

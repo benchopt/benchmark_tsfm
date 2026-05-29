@@ -157,11 +157,11 @@ class Dataset(BaseDataset):
             [y_all[i] for i in range(len(y_all)) if i not in ids_train]
         )
 
-        return X_train, y_train, X_test, y_test
+        return X_train, y_train, X_test, y_test, sfreq_ref, ch_names_ref
 
     def get_data(self):
 
-        X_train, y_train, X_test, y_test = self.prepare()
+        X_train, y_train, X_test, y_test, sfreq, ch_names = self.prepare()
 
         return dict(
             X_train=X_train,
