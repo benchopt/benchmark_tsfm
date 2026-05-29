@@ -1,6 +1,7 @@
 """Shared download helper for the TSB-UAD public dataset bundle.
 """
 from pathlib import Path
+import pooch
 
 from benchopt import config
 
@@ -33,6 +34,25 @@ _SUBDIR = {
 }
 
 
+def fetch_mitdb() -> Path:
+    """Return the local directory holding MIT-BIH Arrhythmia Database files.
+
+    Downloads the database via ``wfdb.dl_database`` on first call; subsequent
+    calls are cache hits if the header files are already present.
+
+    Returns
+    -------
+    Path  directory containing ``<record_id>.hea / .dat / .atr`` files
+    """
+    import wfdb
+    _MITDB_DIR = Path(__file__).parent.parent / "data" / "mitdb"
+
+    _MITDB_DIR.mkdir(parents=True, exist_ok=True)
+    if not (_MITDB_DIR / "100.hea").exists():
+        wfdb.dl_database("mitdb", dl_dir=str(_MITDB_DIR))
+    return _MITDB_DIR
+
+
 def fetch_tsb_uad(name: str) -> Path:
     """Return the local directory holding TSB-UAD's ``.out`` files for *name*.
 
@@ -45,8 +65,6 @@ def fetch_tsb_uad(name: str) -> Path:
             f"{name!r} is not a TSB-UAD dataset name. "
             f"Known names: {sorted(_SUBDIR)}"
         )
-
-    import pooch  # local import: only required when downloading
 
     try:
         import tqdm  # noqa: F401
