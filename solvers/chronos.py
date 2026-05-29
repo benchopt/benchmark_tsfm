@@ -102,7 +102,7 @@ class _ChronosEmbedEncoder(UnpooledEncoder):
     series in the batch.
     """
 
-    def __init__(self, pipeline: ChronosPipeline):
+    def __init__(self, pipeline):
         self.pipeline = pipeline
 
     def encode(self, X) -> np.ndarray:
@@ -121,7 +121,7 @@ class _ChronosHookEncoder(UnpooledEncoder):
     indices are allowed (``-1`` = last block).
     """
 
-    def __init__(self, pipeline: ChronosPipeline, layer: int):
+    def __init__(self, pipeline, layer: int):
         self.pipeline = pipeline
         n_blocks = len(pipeline.model.model.encoder.block)
         if not -n_blocks <= layer < n_blocks:
@@ -159,9 +159,7 @@ class _ChronosHookEncoder(UnpooledEncoder):
         return captured["h"].transpose(0, 1).float().cpu().numpy()
 
 
-def ChronosEncoder(
-    pipeline: ChronosPipeline, layer: int | None = None
-) -> UnpooledEncoder:
+def ChronosEncoder(pipeline, layer: int | None = None) -> UnpooledEncoder:
     """Build a Chronos feature extractor.
 
     Parameters

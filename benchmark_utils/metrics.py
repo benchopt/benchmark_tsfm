@@ -346,6 +346,151 @@ def f1_det(y_true, y_pred, iou_threshold=0.5, score_threshold=None):
 
     valid = [f for f in f1s if not np.isnan(f)]
     return float(np.mean(valid)) if valid else float("nan")
+# _span_iou is an alias kept consistent with _iou_1d above
+
+
+def _span_iou(start_a, len_a, start_b, len_b):
+    """Intersection-over-Union for two [start, start+length) intervals."""
+    return _iou_1d(start_a, len_a, start_b, len_b)
+
+
+def event_span_iou(y_true, y_pred, iou_threshold=0.5):
+    """Mean span IoU for event detection with greedy matching.
+
+    Computes precision/recall/F1 of event spans across all series using greedy
+    IoU matching. A predicted span is a true positive if its IoU with an
+    unmatched ground-truth span exceeds ``iou_threshold``.
+
+    Parameters
+    ----------
+    y_true : List[np.ndarray (N=10, 2+k)]
+        Ground-truth padded event targets. All-zero rows = empty slots.
+    y_pred : List[np.ndarray (N=10, 2+k)]
+        Predicted outputs. Positions (cols 0-1) in [0,1]; class probs in [0,1].
+    iou_threshold : float
+        Minimum IoU to count as a correct span detection (default 0.5).
+
+    Returns
+    -------
+    float — span F1 score averaged over all series
+    """
+    f1_scores = []
+    for gt, pr in zip(y_true, y_pred):
+        gt = np.asarray(gt)
+        pr = np.asarray(pr)
+
+        gt_mask = gt[:, 2:].sum(axis=1) > 0
+        pr_mask = pr[:, 2:].max(axis=1) > 0.5
+
+        gt_spans = gt[gt_mask, :2]
+        pr_spans = pr[pr_mask, :2]
+
+        G = gt_spans.shape[0]
+        P = pr_spans.shape[0]
+
+        if G == 0 and P == 0:
+            f1_scores.append(1.0)
+            continue
+        if G == 0 or P == 0:
+            f1_scores.append(0.0)
+            continue
+
+        matched_gt = set()
+        tp = 0
+        for pi in range(P):
+            best_iou = 0.0
+            best_gi = -1
+            for gi in range(G):
+                if gi in matched_gt:
+                    continue
+                iou = _span_iou(
+                    pr_spans[pi, 0], pr_spans[pi, 1],
+                    gt_spans[gi, 0], gt_spans[gi, 1],
+                )
+                if iou > best_iou:
+                    best_iou = iou
+                    best_gi = gi
+            if best_iou >= iou_threshold and best_gi >= 0:
+                matched_gt.add(best_gi)
+                tp += 1
+
+        precision = tp / P if P > 0 else 0.0
+        recall = tp / G if G > 0 else 0.0
+        f1 = (2 * precision * recall / (precision + recall)
+              if precision + recall > 0 else 0.0)
+        f1_scores.append(f1)
+
+    return float(np.mean(f1_scores))
+
+
+def event_class_f1(y_true, y_pred, iou_threshold=0.5):
+    """Micro-F1 over binary class columns on IoU-matched event slots.
+
+    For each predicted span that is IoU-matched to a ground-truth span, we
+    threshold class probabilities at 0.5 and compute micro-F1 over the k
+    binary class columns. Unmatched ground-truth spans count as false negatives
+    for all their active classes.
+
+    Parameters
+    ----------
+    y_true : List[np.ndarray (N=10, 2+k)]
+    y_pred : List[np.ndarray (N=10, 2+k)]
+    iou_threshold : float
+
+    Returns
+    -------
+    float — micro-F1 over class columns
+    """
+    tp_total = fp_total = fn_total = 0
+
+    for gt, pr in zip(y_true, y_pred):
+        gt = np.asarray(gt)
+        pr = np.asarray(pr)
+
+        gt_mask = gt[:, 2:].sum(axis=1) > 0
+        pr_mask = pr[:, 2:].max(axis=1) > 0.5
+
+        gt_spans = gt[gt_mask]
+        pr_spans = pr[pr_mask]
+
+        G = gt_spans.shape[0]
+        P = pr_spans.shape[0]
+
+        matched_gt = {}
+        matched_pr = set()
+        for gi in range(G):
+            best_iou = 0.0
+            best_pi = -1
+            for pi in range(P):
+                if pi in matched_pr:
+                    continue
+                iou = _span_iou(
+                    pr_spans[pi, 0], pr_spans[pi, 1],
+                    gt_spans[gi, 0], gt_spans[gi, 1],
+                )
+                if iou > best_iou:
+                    best_iou = iou
+                    best_pi = pi
+            if best_iou >= iou_threshold and best_pi >= 0:
+                matched_gt[gi] = best_pi
+                matched_pr.add(best_pi)
+
+        for gi, pi in matched_gt.items():
+            gt_cls = (gt_spans[gi, 2:] > 0.5).astype(int)
+            pr_cls = (pr_spans[pi, 2:] > 0.5).astype(int)
+            tp_total += int((gt_cls & pr_cls).sum())
+            fp_total += int(((1 - gt_cls) & pr_cls).sum())
+            fn_total += int((gt_cls & (1 - pr_cls)).sum())
+
+        for gi in range(G):
+            if gi not in matched_gt:
+                fn_total += int((gt_spans[gi, 2:] > 0.5).sum())
+
+    precision = tp_total / (tp_total + fp_total) if (tp_total + fp_total) > 0 else 0.0
+    recall = tp_total / (tp_total + fn_total) if (tp_total + fn_total) > 0 else 0.0
+    if precision + recall > 0:
+        return float(2 * precision * recall / (precision + recall))
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +519,17 @@ AD_METRICS = {
 
 EVENT_METRICS = {
     "map_iou": map_iou,
+    << << << < HEAD
     "f1_det": f1_det,
+    == == == =
+    "event_span_iou": event_span_iou,
+    "event_class_f1": event_class_f1,
+    >>>>>> > 0d18cdca10c37ad36a1377ba9308990025a2a078
 }
 
-ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS,
-               **EVENT_METRICS}
+ALL_METRICS = {
+    **FORECASTING_METRICS,
+    **CLASSIFICATION_METRICS,
+    **AD_METRICS,
+    **EVENT_METRICS,
+}

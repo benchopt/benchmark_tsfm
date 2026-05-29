@@ -9,6 +9,7 @@ from .encoder import (
 )
 from .linear_probe import LinearProbeAdapter
 from .forecast_residual import ForecastResidualAdapter
+from .event_detection import EventHead, ChronosEventAdapter
 
 __all__ = [
     "BaseTSFMAdapter",
@@ -20,4 +21,6 @@ __all__ = [
     "Encoder",
     "LinearProbeAdapter",
     "ForecastResidualAdapter",
+    "EventHead",
+    "ChronosEventAdapter",
 ]
