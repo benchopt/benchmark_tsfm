@@ -37,12 +37,14 @@ _SUBDIR = {
 
 _BASE_NAMES = {
     "YAHOO": 'Yahoo_', 
-    "ECG" : 'MBA_ECG' 
+    "ECG" : 'MBA_ECG',
+    "SVDB": '8',
 }
 
 _FILES_EXT = {
     "YAHOO": '.out',
-    "ECG": '.out'
+    "ECG": '.out',
+    "SVDB": '.out'
 }
 
 
@@ -103,8 +105,8 @@ def load_data_tsb_uad(path, records_ids, train_ratio):
     # get ids of records
     if records_ids in (None, "all", ["all"]):
         records_ids = [
-            f.name for f in path.glob('*'+extension)
-            if f.name.startswith(base_name)
+            f.stem for f in path.glob('*'+extension)
+            if f.stem.startswith(base_name)
         ]
 
     X_train, X_test, y_test = [], [], []
