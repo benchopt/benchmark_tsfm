@@ -12,12 +12,11 @@ References:
 import numpy as np
 import torch
 from benchopt import BaseSolver
-from sklearn.pipeline import make_pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import FunctionTransformer
 
+from benchmark_utils.adapters.linear_probe import LinearProbeAdapter
 from mantis.trainer import MantisTrainer
 from mantis.architecture import MantisV1, MantisV2
+
 
 SUPPORTED_TASKS = {"classification"}
 
@@ -26,11 +25,11 @@ class Solver(BaseSolver):
     """Mantis time series classification solver with Random Forest.
 
     The model is loaded once in ``set_objective`` (not timed). Training
-    embeddings are extracted and a Random Forest classifier is trained.
+    embeddings are extracted and a classification head is trained.
     During ``run`` the predictions are generated for the test set.
     """
 
-    name = "Mantis-RandomForest"
+    name = "Mantis"
 
     # mantis-tsfm and torch are required to load the model and run inference.
     requirements = [
@@ -42,11 +41,13 @@ class Solver(BaseSolver):
         "batch_size": [32],
         "n_estimators": [100],
         "interpolate_to": [512],
+        "max_iter": [1000],
+        "classifier": ["logistic_regression"],
     }
 
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
-            return True, f"Chronos solver does not support task={task!r}"
+            return True, f"Mantis solver does not support task={task!r}"
         return False, None
 
     def set_objective(self, task, X_train, y_train, **meta):
@@ -93,21 +94,23 @@ class Solver(BaseSolver):
                     "access and the model is available."
                 )
 
-        self.model = make_pipeline(
-            FunctionTransformer(self._extract_embeddings),
-            RandomForestClassifier(
-                n_estimators=self.n_estimators,
-                n_jobs=-1,
-                random_state=42,
-                verbose=0
-            )
-        )
-
         self._device = device
 
     def run(self, _):
-        """Fit the model on the training data."""
-        self.model.fit(self.X_train, self.y_train)
+        """Fit the linear probe adapter on the training data."""
+        self._adapter = LinearProbeAdapter(
+            encoder=self,
+            task=self.task,
+            max_iter=self.max_iter,
+            n_estimators=self.n_estimators,
+            classifier=self.classifier
+        )
+        self._adapter.fit(self.X_train, self.y_train)
+
+
+    def encode(self, x):
+        """Encode a batch of time series into embeddings."""
+        return self._extract_embeddings(x)
 
     def _extract_embeddings(self, X):
         """Extract embeddings for a batch of time series.
@@ -189,7 +192,7 @@ class Solver(BaseSolver):
         return X_in
 
     def get_result(self):
-        """Return the classification predictions and probabilities."""
+        """Return the fitted adapter."""
         return {
-            "model": self.model
+            "model": self._adapter
         }
