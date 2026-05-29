@@ -1,8 +1,11 @@
-# scripts/
+# scripts/ + plots/
 
 Helper scripts that sit alongside the benchopt benchmark. None of them are
 solvers, datasets, or objectives — they're tooling for importing upstream
 benchmark results and producing statistical comparison figures.
+
+- `scripts/import_fev_bench.py` — download + convert FEV-bench results
+- `plots/plot_cd_grid.py`       — Critical Difference diagram grid
 
 ## Prerequisites
 
@@ -101,14 +104,14 @@ single PNG grid. Uses `scipy.stats.friedmanchisquare` +
 
 ```bash
 # Standard: 2-column grid, all metrics with sufficient data
-python scripts/plot_cd_grid.py outputs/fev_bench_results.parquet --ncols 2
+python plots/plot_cd_grid.py outputs/fev_bench_results.parquet --ncols 2
 
 # Filter rows before pivoting (e.g. one TabArena problem type only)
-python scripts/plot_cd_grid.py data/tabarena_full.parquet \
+python plots/plot_cd_grid.py data/tabarena_full.parquet \
     --filter "p_dataset_problem_type=='binary'" --ncols 2
 
 # Custom output path
-python scripts/plot_cd_grid.py outputs/fev_bench_results.parquet \
+python plots/plot_cd_grid.py outputs/fev_bench_results.parquet \
     --out figures/cd_fev.png
 ```
 
