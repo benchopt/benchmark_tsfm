@@ -24,7 +24,7 @@ from benchmark_utils.adapters import (
 )
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.outputs import ForecastOutput
-from solvers.chronos import (
+from .chronos import (
     _ChronosForecaster,
     POOLERS,
     SUPPORTED_TASKS,
