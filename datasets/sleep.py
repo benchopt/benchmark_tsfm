@@ -32,6 +32,12 @@ def _load_subject(
     dataset = SleepPhysionet(subject_ids=[sub_id], crop_wake_mins=30)
 
     preprocess(dataset, preprocessors)
+
+    # Extract the frequency and channels names
+    raw = dataset.datasets[0].raw
+    sfreq = raw.info["sfreq"]
+    ch_names = raw.ch_names
+
     windows_dataset = create_windows_from_events(
         dataset,
         trial_start_offset_samples=0,
@@ -53,7 +59,7 @@ def _load_subject(
 
         data = x[0].T
         all_data.append(data)
-    return all_data, all_labels
+    return all_data, all_labels, sfreq, ch_names
 
 
 class Dataset(BaseDataset):
@@ -120,12 +126,17 @@ class Dataset(BaseDataset):
 
         X_all, y_all = [], []
         sub_ids = sub_ids[:2] if self.debug else sub_ids
+        sfreq_ref, ch_names_ref = None, None
         for sub_id in sub_ids:
             if sub_id in [39, 68, 69, 78, 79]:
                 continue
-            X_, y_ = _load_subject(
+            X_, y_, sfreq, ch_names = _load_subject(
                 sub_id, preprocessors, mapping, window_size_samples
             )
+            if sfreq_ref is None:
+                sfreq_ref, ch_names_ref = sfreq, ch_names
+            else:
+                assert sfreq == sfreq_ref and ch_names == ch_names_ref, f"Inconsistent meta for sub {sub_id}"
             if self.debug:
                 X_ = X_[:5000]
                 y_ = y_[:5000]
@@ -154,4 +165,6 @@ class Dataset(BaseDataset):
             task="classification",
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
             n_classes=5,
+            freq=sfreq,
+            ch_names=ch_names
         )
