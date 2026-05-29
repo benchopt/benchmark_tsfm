@@ -74,12 +74,12 @@ class _Chronos2Forecaster(_ChronosForecaster):
                 layout.append((series_idx, cutoff_idx))
         return inputs, layout, per_series_shape
 
-    def _assemble_output(self, forecast, layout, per_series_shape):
+    def _assemble_output(self, forecast, layout, per_series_shape, prediction_length):
         """Use quantile tensors directly from Chronos-2 pipeline."""
         # forecast: list[(n_variates, Q, prediction_length)]
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
         for (series_idx, cutoff_idx), pred in zip(layout, forecast):
@@ -226,7 +226,6 @@ class Solver(BaseSolver):
         elif self.task == "anomaly_detection":
             self._adapter = ForecastResidualAdapter(
                 _Chronos2Forecaster(self._pipeline, prediction_length=1),
-                prediction_length=1,
             )
 
     def get_result(self):
