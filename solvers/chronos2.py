@@ -178,6 +178,11 @@ class Solver(BaseSolver):
         "model_size": ["small"],
         "layer": [None],
         "pooler": ["mean"],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
