@@ -46,67 +46,6 @@ class Solver(BaseSolver):
         "n_iterators": [100],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"Mantis solver does not support task={task!r}"
-        return False, None
-
-    def set_objective(self, task, X_train, y_train, **meta):
-        """Prepare the solver for a given dataset configuration.
-
-        Model loading is done here (not inside ``run``) so that the
-        checkpoint download/loading time is excluded from the benchmark
-        timing.
-        """
-        self.task = task
-        self.X_train = X_train
-        self.y_train = y_train
-        self.meta = meta
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # Load the model only on the first call for this checkpoint.
-        should_reload = (
-            not hasattr(self, "_network")
-            or not hasattr(self, "_loaded_checkpoint")
-            or self._loaded_checkpoint != self.checkpoint
-        )
-        if should_reload:
-            try:
-                MantisBackbone = MantisV2 if "MantisV2" in self.checkpoint else MantisV1
-                network = MantisBackbone(device=device)
-                network = network.from_pretrained(self.checkpoint)
-
-                self._network = network
-                self._trainer = MantisTrainer(device=device, network=self._network)
-                self._loaded_checkpoint = self.checkpoint
-                print(
-                    f"✓ Mantis checkpoint loaded: {self.checkpoint} on device: {device}"
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to load Mantis checkpoint '{self.checkpoint}' "
-                    f"from Hugging Face: {e}. Make sure you have internet "
-                    "access and the model is available."
-                )
-
-        self._device = device
-
-    def run(self, _):
-        """Fit the linear probe adapter on the training data."""
-        self._adapter = LinearProbeAdapter(
-            encoder=self,
-            task=self.task,
-            max_iter=self.max_iter,
-            n_estimators=self.n_estimators,
-            classifier=self.classifier,
-        )
-        self._adapter.fit(self.X_train, self.y_train)
-
-    def encode(self, x):
-        """Encode a batch of time series into embeddings."""
-        return self._extract_embeddings(x)
-
     def _extract_embeddings(self, X):
         """Extract embeddings for a batch of time series.
 
@@ -185,6 +124,67 @@ class Solver(BaseSolver):
             )
 
         return X_in
+
+    def skip(self, task, **kwargs):
+        if task not in SUPPORTED_TASKS:
+            return True, f"Mantis solver does not support task={task!r}"
+        return False, None
+
+    def set_objective(self, task, X_train, y_train, **meta):
+        """Prepare the solver for a given dataset configuration.
+
+        Model loading is done here (not inside ``run``) so that the
+        checkpoint download/loading time is excluded from the benchmark
+        timing.
+        """
+        self.task = task
+        self.X_train = X_train
+        self.y_train = y_train
+        self.meta = meta
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Load the model only on the first call for this checkpoint.
+        should_reload = (
+            not hasattr(self, "_network")
+            or not hasattr(self, "_loaded_checkpoint")
+            or self._loaded_checkpoint != self.checkpoint
+        )
+        if should_reload:
+            try:
+                MantisBackbone = MantisV2 if "MantisV2" in self.checkpoint else MantisV1
+                network = MantisBackbone(device=device)
+                network = network.from_pretrained(self.checkpoint)
+
+                self._network = network
+                self._trainer = MantisTrainer(device=device, network=self._network)
+                self._loaded_checkpoint = self.checkpoint
+                print(
+                    f"✓ Mantis checkpoint loaded: {self.checkpoint} on device: {device}"
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load Mantis checkpoint '{self.checkpoint}' "
+                    f"from Hugging Face: {e}. Make sure you have internet "
+                    "access and the model is available."
+                )
+
+        self._device = device
+
+    def run(self, _):
+        """Fit the linear probe adapter on the training data."""
+        self._adapter = LinearProbeAdapter(
+            encoder=self,
+            task=self.task,
+            max_iter=self.max_iter,
+            n_estimators=self.n_estimators,
+            classifier=self.classifier,
+        )
+        self._adapter.fit(self.X_train, self.y_train)
+
+    def encode(self, x):
+        """Encode a batch of time series into embeddings."""
+        return self._extract_embeddings(x)
 
     def get_result(self):
         """Return the fitted adapter."""
