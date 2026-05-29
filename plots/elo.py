@@ -95,29 +95,42 @@ def _pairwise_wins(mat: np.ndarray) -> np.ndarray:
     return W
 
 
-def _fit_bt(W: np.ndarray) -> np.ndarray:
+def _fit_bt(W: np.ndarray, prior_games: float = 1.0) -> np.ndarray:
     """Fit Bradley-Terry log-ratings by maximum likelihood.
 
     The BT log-likelihood of observed wins W is
         sum_{i,j} W[i,j] * log sigmoid(r_i - r_j).
     Location is unidentified, so we anchor at sum(r) = 0 after the fit.
+
+    Parameters
+    ----------
+    W : (k, k) win matrix from _pairwise_wins.
+    prior_games : float
+        Total number of pseudo-games added *per pair*, split 50/50.
+        The actual pseudocount added to each W[i,j] is
+        ``prior_games / (2 * n_datasets)``, so the prior always represents
+        a fixed fraction of the evidence regardless of dataset count.
+        Default 1.0 → the prior is equivalent to one extra balanced game
+        across the whole dataset, keeping ratings bounded without
+        meaningfully shrinking real gaps.
     """
     k = W.shape[0]
+    # Total games played per pair = W[i,j] + W[j,i] (≈ n_datasets).
+    # Scale prior so it stays a constant fraction of evidence.
+    n_datasets = W.sum() / (k * (k - 1)) if k > 1 else 1.0
+    eps = prior_games / (2.0 * max(n_datasets, 1.0))
+    prior_mat = eps * (1.0 - np.eye(k))
+    W_reg = W + prior_mat
 
     def nll(r):
         diff = r[:, None] - r[None, :]
-        # log_expit is numerically stable for all inputs (no overflow).
-        return -float((W * log_expit(diff)).sum())
+        return -float((W_reg * log_expit(diff)).sum())
 
     def grad(r):
         diff = r[:, None] - r[None, :]
-        # d/dr_i log sigmoid(r_i - r_j) = sigmoid(r_j - r_i)
-        p = expit(-diff)        # (k, k): expected loss probability of i vs j
-        # gradient of -nll w.r.t r_i = sum_j W[i,j] * (1 - p_win[i,j])
-        #                            - sum_j W[j,i] * p_win[j,i]
-        # where p_win[i,j] = sigmoid(r_i - r_j) = 1 - p[i,j]
-        g = (W * p).sum(axis=1) - (W.T * (1 - p.T)).sum(axis=1)
-        return -g  # because we're minimizing nll
+        p = expit(-diff)
+        g = (W_reg * p).sum(axis=1) - (W_reg.T * (1 - p.T)).sum(axis=1)
+        return -g
 
     r0 = np.zeros(k)
     res = minimize(nll, r0, jac=grad, method="L-BFGS-B",

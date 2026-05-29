@@ -65,16 +65,20 @@ def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
 
 
 def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
-    """Combine all three task types into one solvers×datasets pivot."""
+    """Combine all three task types into one solvers×datasets pivot.
+
+    Only solvers that have results for ALL three tasks are included.
+    """
     records: dict[str, dict[str, float]] = {}
+    dataset_task: dict[str, str] = {}  # dataset → which task it belongs to
     for dataset_name, grp in df.groupby("dataset_name"):
         candidates = []
-        for col in _TASK_METRICS.values():
+        for task_key, col in _TASK_METRICS.items():
             if col in grp.columns and grp[col].notna().any():
-                candidates.append(col)
+                candidates.append((task_key, col))
         if len(candidates) != 1:
             continue
-        col = candidates[0]
+        task, col = candidates[0]
         rows = grp[["solver_name", col]].dropna(subset=[col])
         if rows["solver_name"].duplicated().any() or len(rows) < 2:
             continue
@@ -83,10 +87,29 @@ def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
         if is_higher_better(col):
             values = {s: -v for s, v in values.items()}
         records[str(dataset_name)] = values
+        dataset_task[str(dataset_name)] = task
+
     if not records:
         return pd.DataFrame()
-    pivot = pd.DataFrame(records).T
+
+    pivot = pd.DataFrame(records).T   # datasets × solvers
     pivot = pivot.dropna(axis=1, how="any").dropna(axis=0, how="any")
+
+    # Filter: keep only solvers present in every task
+    tasks_present = set(_TASK_METRICS.keys())
+    solver_tasks: dict[str, set[str]] = {col: set() for col in pivot.columns}
+    for dataset, task in dataset_task.items():
+        if dataset in pivot.index:
+            for solver in pivot.columns:
+                if not pd.isna(pivot.loc[dataset, solver]):
+                    solver_tasks[solver].add(task)
+
+    all_tasks_solvers = [s for s, tasks in solver_tasks.items()
+                         if tasks >= tasks_present]
+    if not all_tasks_solvers:
+        return pd.DataFrame()
+
+    pivot = pivot[all_tasks_solvers]
     return pivot.T  # solvers × datasets
 
 
