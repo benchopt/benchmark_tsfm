@@ -16,6 +16,7 @@ n_classes : int
 from benchopt import BaseDataset
 
 import numpy as np
+from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
 
 
@@ -49,7 +50,6 @@ class Dataset(BaseDataset):
         X_te = np.asarray(X_te, dtype=np.float32)
 
         # Encode string labels to consecutive integers.
-        from sklearn.preprocessing import LabelEncoder
         le = LabelEncoder()
         y_tr_enc = le.fit_transform(y_tr).astype(np.int64)
         y_te_enc = le.transform(y_te).astype(np.int64)
