@@ -12,22 +12,29 @@ or via ``aeon.datasets.forecasting_dataset_names()``.
 
 Data contract output
 --------------------
-X_train : List[np.ndarray (T_i, C)]   training portions of each series
-y_train : List[np.ndarray (H, C)]     next-H targets aligned with X_train
-                                       (useful for supervised fine-tuning)
-X_test  : List[np.ndarray (T_ctx, C)] rolling-window contexts (variable length)
-y_test  : List[np.ndarray (H, C)]     ground-truth horizons
-task    : "forecasting"
-metrics : ["mae", "mse", "mase", "smape"]
+X_train         : List[np.ndarray (T_i, C)]      training portions of each series
+y_train         : List[np.ndarray (H, C)]        next-H targets aligned with X_train
+X_test          : List[np.ndarray (T_i, C)]      full series — model uses
+                                                  ``x[:cutoff]`` as history
+cutoff_indexes  : List[List[int]]                jagged: per-series cutoff
+                                                  positions in X_test
+y_test          : List[np.ndarray (n_cutoffs, H, C)]
+                                                  ground-truth windows
+covariates      : dict                           {static_covars, hist_covars,
+                                                  future_covars} — all empty for
+                                                  Monash today
+task            : "forecasting"
+metrics         : ["mae", "mse", "mase", "smape"]
 prediction_length : int
-freq : str  (e.g. "Y", "M", "D")
-seasonality : int  (seasonal period used for MASE)
+freq            : str  (e.g. "Y", "M", "D")
+seasonality     : int  (seasonal period used for MASE)
 """
 
 import numpy as np
 from benchopt import BaseDataset
 
 from aeon.datasets import load_forecasting
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.windowing import make_forecasting_splits
 
 
@@ -120,7 +127,7 @@ class Dataset(BaseDataset):
             )
 
         n_windows = 1 if self.debug else self.n_windows
-        X_test, y_test = make_forecasting_splits(
+        X_test, cutoff_indexes, y_test = make_forecasting_splits(
             full_series,
             prediction_length=pred_len,
             n_windows=n_windows,
@@ -131,6 +138,8 @@ class Dataset(BaseDataset):
             y_train=y_train_list,
             X_test=X_test,
             y_test=y_test,
+            cutoff_indexes=cutoff_indexes,
+            covariates=Covariates(),
             task="forecasting",
             metrics=["mae", "mse", "mase", "smape"],
             prediction_length=pred_len,
