@@ -135,6 +135,66 @@ def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
     return out
 
 
+# ---------------------------------------------------------------------------
+# Cell-level HTML helpers
+# ---------------------------------------------------------------------------
+
+# Tailwind-ish colours readable on white: amber-600 for the low bound,
+# emerald-600 for the high bound. The user asked specifically for yellow/green;
+# these are the darkest defensible shades that remain legible.
+_LOW_COLOUR = "#ca8a04"
+_HIGH_COLOUR = "#16a34a"
+
+
+def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
+    """HTML cell rendering the Elo point estimate over the CI deltas."""
+    low_delta = ci_low - elo     # negative
+    high_delta = ci_high - elo   # positive
+    return (
+        f'<div style="line-height:1.25">'
+        f'<div style="font-weight:600">{elo:.0f}</div>'
+        f'<div style="font-size:0.85em">'
+        f'<span style="color:{_LOW_COLOUR}">{low_delta:+.0f}</span>&nbsp;'
+        f'<span style="color:{_HIGH_COLOUR}">{high_delta:+.0f}</span>'
+        f'</div></div>'
+    )
+
+
+# Click-to-sort: benchopt's renderer uses `th.innerText` so we can't attach
+# `onclick` via the columns list. We side-channel through a hidden <img> in
+# the first body cell; its `onerror` fires once the row is in the DOM and
+# wires up click handlers on every <th>. The script also re-fires when
+# benchopt re-renders the table (precision toggle, metric change).
+_SORT_INJECT_HTML = (
+    '<img src="" style="display:none" onerror="'
+    # Defer until benchopt finishes appending the table to #table_container.
+    # The onerror fires while the <td> is still being parsed (no table in DOM
+    # yet); a small setTimeout punts past the rest of renderTable().
+    "setTimeout(function(){"
+    "var t=document.querySelector(&quot;#table_container table&quot;);"
+    "if(!t)return;"
+    "t.querySelectorAll(&quot;th&quot;).forEach(function(th,i){"
+    "th.style.cursor=&quot;pointer&quot;;"
+    "th.title=&quot;Click to sort&quot;;"
+    "th.onclick=function(){"
+    "var tbody=t.querySelector(&quot;tbody&quot;);"
+    "var rows=Array.from(tbody.querySelectorAll(&quot;tr&quot;));"
+    "var asc=!th._asc;th._asc=asc;"
+    "rows.sort(function(a,b){"
+    "var av=a.children[i].textContent.trim();"
+    "var bv=b.children[i].textContent.trim();"
+    "var an=parseFloat(av),bn=parseFloat(bv);"
+    "if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;"
+    "return asc?av.localeCompare(bv):bv.localeCompare(av);"
+    "});"
+    "rows.forEach(function(r){tbody.appendChild(r);});"
+    "};"
+    "});"
+    "},50);"
+    '">'
+)
+
+
 class Plot(BasePlot):
     """Elo leaderboard with bootstrap 95% CI — as a benchopt table.
 
@@ -142,9 +202,25 @@ class Plot(BasePlot):
     is auto-populated with every numeric ``objective_*`` column in the
     parquet, switching the leaderboard in place.
 
+    Column layout
+    -------------
+    - **Solver** — the solver name (stripped of benchopt parameter bracket).
+    - **Elo** — point estimate (top) with the signed delta to the 95% CI
+      bounds underneath: yellow ``−low`` and green ``+high``.
+    - **Games** — total number of pairwise games played by each solver
+      (= ``(k − 1) · N`` for ``k`` solvers and ``N`` datasets).
+
+    Sorting
+    -------
+    Default order is Elo descending. Every column header is clickable to
+    re-sort in place; numeric columns sort numerically (parsing the leading
+    Elo value out of the multi-line cell), string columns lexicographically.
+
+    Direction
+    ---------
     Assumes lower-is-better metrics (FEV's SQL/MASE/WAPE/WQL/error fit, as do
     most forecasting losses). For higher-is-better metrics, negate the column
-    upstream (e.g., store ``1 - roc_auc`` rather than ``roc_auc``).
+    upstream (e.g., store ``1 − roc_auc`` rather than ``roc_auc``).
     """
 
     name = "Elo"
@@ -170,21 +246,20 @@ class Plot(BasePlot):
         k, n = pivot.shape
         if k < 2 or n < 2:
             return [["(insufficient data — need ≥2 solvers and ≥2 complete datasets)",
-                     "—", "—", "—", "—", "—"]]
+                     "—", "—"]]
 
         table = _elo_table(pivot)
-        rank_col = list(range(1, len(table) + 1))
         rows = []
-        for rank, row in zip(rank_col, table.itertuples(index=False)):
-            half_width = (row.ci_high - row.ci_low) / 2.0
+        for idx, row in enumerate(table.itertuples(index=False)):
+            elo_html = _elo_cell(row.elo, row.ci_low, row.ci_high)
+            # Inject the click-to-sort wiring into the very first cell of
+            # the first body row. innerHTML doesn't execute <script> tags,
+            # but it does execute attribute event handlers — hence <img onerror>.
+            solver_cell = (_SORT_INJECT_HTML + row.solver) if idx == 0 else row.solver
             rows.append([
-                rank,
-                row.solver,
-                f"{row.elo:.0f}",
-                f"{row.ci_low:.0f}",
-                f"{row.ci_high:.0f}",
-                f"±{half_width:.0f}",
-                int(row.games),
+                solver_cell,
+                elo_html,
+                str(int(row.games)),  # str to bypass benchopt's .toFixed()
             ])
         return rows
 
@@ -193,8 +268,7 @@ class Plot(BasePlot):
             "title": (
                 f"Elo leaderboard — {objective_column} "
                 f"(lower better, bootstrap N={N_BOOTSTRAP}, mean anchored at "
-                f"{ELO_ANCHOR:.0f})"
+                f"{ELO_ANCHOR:.0f}). Click any column header to sort."
             ),
-            "columns": ["Rank", "Solver", "Elo",
-                        "95% CI low", "95% CI high", "± half-width", "Games"],
+            "columns": ["Solver", "Elo", "Games"],
         }
