@@ -1,34 +1,32 @@
-"""REVE solver for EEG time series classification.
+"""REVE solver — frozen foundation backbone + linear probe.
 
-Uses the REVE EEG foundation model (HuggingFace
-``brain-bzh/reve-*``) to extract embeddings, then trains a Random
-Forest classifier on top — no backbone fine-tuning, the foundation
-model is kept frozen.
-
-REVE expects EEG sampled at **200 Hz**; inputs sampled at any other
-rate are resampled with a polyphase (anti-aliased) filter before the
-forward pass.
+REVE expects EEG sampled at 200 Hz with monopolar 10-20 channel
+names. Inputs at other rates are resampled via polyphase filtering;
+datasets with bipolar or prefixed channel names are skipped (the
+position bank cannot resolve them to single 3D coordinates).
 
 References:
     https://huggingface.co/brain-bzh/reve-large
     https://huggingface.co/brain-bzh/reve-positions
 """
 
+from math import gcd
+
 import numpy as np
 import torch
 from benchopt import BaseSolver
-from sklearn.pipeline import make_pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import FunctionTransformer
+from scipy.signal import resample_poly
+
+from benchmark_utils.adapters.linear_probe import LinearProbeAdapter
 
 SUPPORTED_TASKS = {"classification"}
-REVE_SFREQ = 200  # REVE is trained at 200 Hz
+REVE_SFREQ = 200
 
 
 class Solver(BaseSolver):
-    """REVE foundation model + Random Forest classifier."""
+    """REVE foundation model + linear probe."""
 
-    name = "REVE-RandomForest"
+    name = "REVE"
 
     requirements = [
         "pip::braindecode",
@@ -42,57 +40,43 @@ class Solver(BaseSolver):
         "pos_bank_checkpoint": ["brain-bzh/reve-positions"],
         "batch_size": [16],
         "n_estimators": [100],
+        "max_iter": [1000],
+        "classifier": ["logistic_regression"],
     }
 
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"REVE solver does not support task={task!r}"
 
-        # REVE expects monopolar 10-20 channel names ("Fpz", "C3", …).
-        # Datasets that ship bipolar derivations ("EEG Fpz-Cz") or
-        # prefixed names cannot be aligned with REVE's position bank —
-        # skip them rather than feed bogus electrode positions.
+        # REVE was trained on monopolar 10-20 montages — bipolar
+        # derivations ("EEG Fpz-Cz") have no single 3D position.
         ch_names = kwargs.get("ch_names")
         if ch_names is None:
-            return True, (
-                "REVE requires `ch_names` in dataset meta to build "
-                "channel positions; dataset does not provide it."
-            )
+            return True, "REVE requires `ch_names` in dataset meta."
         bad = [
             n for n in ch_names
             if "-" in n or any(
-                n.startswith(prefix) for prefix in ("EEG ", "EOG ", "EMG ")
+                n.startswith(p) for p in ("EEG ", "EOG ", "EMG ")
             )
         ]
         if bad:
             return True, (
-                f"REVE expects monopolar 10-20 channel names; dataset "
-                f"provides bipolar/prefixed names (e.g. {bad[0]!r}). "
-                f"Skipping to avoid silently producing biased embeddings."
+                f"REVE expects monopolar 10-20 names; got {bad[0]!r}."
             )
 
-        # REVE checkpoints are gated on HuggingFace Hub. Skip cleanly
-        # (rather than crashing mid-benchmark) when the user has no
-        # access — either because they haven't requested it or because
-        # their machine isn't authenticated (`huggingface-cli login`).
+        # Gated repo: skip cleanly when access/auth is missing.
         try:
             from huggingface_hub import HfApi
             HfApi().model_info(self.checkpoint)
         except Exception as e:
             return True, (
-                f"REVE checkpoint '{self.checkpoint}' is gated or "
-                f"unreachable. Request access at "
-                f"https://huggingface.co/{self.checkpoint} and run "
-                f"`huggingface-cli login`. ({type(e).__name__}: {e})"
+                f"REVE checkpoint '{self.checkpoint}' gated or unreachable. "
+                f"Request access and run `huggingface-cli login`. "
+                f"({type(e).__name__})"
             )
         return False, None
 
     def set_objective(self, task, X_train, y_train, **meta):
-        """Prepare the solver for a given dataset configuration.
-
-        The foundation model and position bank are loaded here (not in
-        ``run``) so the download/load time is excluded from timing.
-        """
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
@@ -105,18 +89,9 @@ class Solver(BaseSolver):
         else:
             device = "cpu"
 
-        # Source sampling rate and electrode names must come from the
-        # dataset's meta — REVE cannot infer them. ``dict.get(k, default)``
-        # only falls back when the key is absent, so we coalesce ``None``
-        # values too (datasets may set ``freq=None`` to signal "unknown").
         freq = meta.get("freq") or REVE_SFREQ
         self._src_sfreq = float(freq)
-        self._ch_names = meta.get("ch_names", None)
-        if self._ch_names is None:
-            raise ValueError(
-                "REVE requires `ch_names` in dataset meta to build "
-                "channel positions."
-            )
+        self._ch_names = meta["ch_names"]
 
         should_reload = (
             not hasattr(self, "_network")
@@ -126,10 +101,9 @@ class Solver(BaseSolver):
             try:
                 from transformers import AutoModel
 
-                # REVE ships custom modeling code on the Hub
-                # (`modeling_reve.py`), so `trust_remote_code=True` is
-                # mandatory to avoid an interactive prompt that would
-                # break batch / CI runs of the benchmark.
+                # trust_remote_code: REVE ships custom modeling code on
+                # the Hub. Mandatory to avoid an interactive prompt that
+                # would break batch/CI runs.
                 network = AutoModel.from_pretrained(
                     self.checkpoint, trust_remote_code=True
                 )
@@ -149,32 +123,27 @@ class Solver(BaseSolver):
                     f"Failed to load REVE checkpoint '{self.checkpoint}': {e}"
                 )
 
-        # Pre-compute channel positions (C, 3) once per dataset.
+        # Positions (C, 3) recomputed per dataset since ch_names varies.
         with torch.no_grad():
             self._positions = self._pos_bank(self._ch_names)
 
         self._device = device
 
-        self.model = make_pipeline(
-            FunctionTransformer(self._extract_embeddings),
-            RandomForestClassifier(
-                n_estimators=self.n_estimators,
-                n_jobs=-1,
-                random_state=42,
-            ),
-        )
-
     def run(self, _):
-        """Fit the Random Forest on REVE embeddings."""
-        self.model.fit(self.X_train, self.y_train)
+        self._adapter = LinearProbeAdapter(
+            encoder=self,
+            task=self.task,
+            classifier=self.classifier,
+            max_iter=self.max_iter,
+            n_estimators=self.n_estimators,
+        )
+        self._adapter.fit(self.X_train, self.y_train)
+
+    def encode(self, X):
+        """LinearProbeAdapter entry point — returns (N, embed_dim)."""
+        return self._extract_embeddings(X)
 
     def _extract_embeddings(self, X):
-        """Forward batches through the frozen REVE backbone.
-
-        Returns
-        -------
-        np.ndarray of shape (N, embedding_dim)
-        """
         batch_size = self.batch_size
         n_samples = len(X)
         all_embeddings = []
@@ -187,16 +156,11 @@ class Solver(BaseSolver):
             x_t = torch.tensor(
                 X_batch_processed, dtype=torch.float32, device=self._device
             )
-            # Broadcast positions (C, 3) → (B, C, 3) for this batch.
             pos = self._positions.unsqueeze(0).expand(x_t.size(0), -1, -1)
 
-            # The HF custom `Reve` class loaded via AutoModel is tagged
-            # "Feature Extraction" on the Hub: its forward already
-            # returns embeddings directly, no flag needed.
             with torch.no_grad():
                 emb = self._network(x_t, pos)
-            # If REVE returns a sequence/spatial map (n_chans × n_patches
-            # × D), flatten the trailing axes into one vector per sample
+
             if emb.ndim > 2:
                 emb = emb.flatten(start_dim=1)
 
@@ -207,25 +171,19 @@ class Solver(BaseSolver):
     def _prepare_inputs(self, X_batch):
         """Reshape (N, T, C) → (N, C, T) and resample to 200 Hz.
 
-        REVE is frequency-aware. A naive ``F.interpolate`` would alias when
-        downsampling and add spectral artefacts when upsampling, so we
-        use a polyphase resampler (``scipy.signal.resample_poly``) that
-        applies a anti-aliasing filter.
+        Polyphase (anti-aliased) — REVE is frequency-aware so naive
+        ``F.interpolate`` would corrupt the bands it was trained on.
         """
-        X_in = X_batch.transpose(0, 2, 1)  # (N, C, T)
+        X_in = X_batch.transpose(0, 2, 1)
 
         if int(self._src_sfreq) != REVE_SFREQ:
-            from math import gcd
-            from scipy.signal import resample_poly
-
             src = int(self._src_sfreq)
             g = gcd(src, REVE_SFREQ)
-            up = REVE_SFREQ // g
-            down = src // g
-            X_in = resample_poly(X_in, up=up, down=down, axis=-1)
+            X_in = resample_poly(
+                X_in, up=REVE_SFREQ // g, down=src // g, axis=-1
+            )
 
         return np.ascontiguousarray(X_in, dtype=np.float32)
 
     def get_result(self):
-        """Return the fitted pipeline."""
-        return {"model": self.model}
+        return {"model": self._adapter}
