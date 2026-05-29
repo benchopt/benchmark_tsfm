@@ -16,7 +16,6 @@ one forward pass.
 
 import numpy as np
 import torch
-from benchopt import BaseSolver
 from chronos import ChronosPipeline
 
 from benchmark_utils.adapters import (
@@ -29,6 +28,7 @@ from benchmark_utils.adapters import (
 )
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.base_solver import BaseTSFMSolver
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
@@ -39,52 +39,6 @@ POOLERS = {
     "max": MaxPooler,
     "last": LastPooler,
 }
-
-
-class _ChronosForecaster(BaseTSFMAdapter):
-    """Batched Chronos-2 adapter returning a full quantile fan."""
-
-    def __init__(self, pipeline, prediction_length):
-        self.pipeline = pipeline
-        self.prediction_length = prediction_length
-        self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
-
-    def predict(self, x: ForecastInput) -> ForecastOutput:
-        inputs = []
-        layout = []  # (series_idx, cutoff_idx) per input element
-        per_series_shape = []  # (C, n_cutoffs) per series
-        for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
-            series = np.asarray(series, dtype=np.float32)
-            if series.ndim == 1:
-                series = series[:, None]
-            _, C = series.shape
-            per_series_shape.append((C, len(cutoffs)))
-            for cutoff_idx, cutoff in enumerate(cutoffs):
-                hist = series[:cutoff]  # (T_cutoff, C)
-                inputs.append(torch.from_numpy(hist.T))  # (C, T_cutoff)
-                layout.append((series_idx, cutoff_idx))
-
-        if not inputs:
-            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
-
-        with torch.no_grad():
-            forecast = self.pipeline.predict(
-                inputs,
-                prediction_length=self.prediction_length,
-            )
-        # forecast: list[(n_variates, Q, prediction_length)] aligned with `inputs`.
-
-        Q = len(self.quantile_levels)
-        per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
-            for C, n_cutoffs in per_series_shape
-        ]
-        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
-            arr = pred.float().cpu().numpy()  # (C, Q, H)
-            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
-        return ForecastOutput(
-            quantiles=per_series, quantile_levels=self.quantile_levels
-        )
 
 
 def _to_context(x):
@@ -195,7 +149,7 @@ def ChronosEncoder(pipeline, layer: int | None = None) -> UnpooledEncoder:
 # ---------------------------------------------------------------------------
 
 
-class Solver(BaseSolver):
+class Solver(BaseTSFMSolver):
     """Chronos-2 zero-shot solver.
 
     Parameters
@@ -217,31 +171,40 @@ class Solver(BaseSolver):
 
     requirements = ["pip::chronos-forecasting>=2.2,<3"]
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "model_size": ["small"],
         "layer": [None],
         "pooler": ["mean"],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"Chronos solver does not support task={task!r}"
-        return False, None
+    def __init__(self, model_size="small", layer=None, pooler="mean"):
+        """Initialize Chronos-specific state.
 
-    def set_objective(self, X_train, y_train, task, **meta):
+        Parameters
+        ----------
+        model_size : str, default="small"
+            Chronos model variant to load.
+        layer : int or None, default=None
+            Encoder block index for classification embeddings.
+        pooler : {"mean", "max", "last"}, default="mean"
+            Pooling strategy over the time-token axis for classification.
+        """
+        super().__init__(
+            model_size=model_size,
+            layer=layer,
+            pooler=pooler,
+        )
+        self._pipeline = None
+        self._loaded_model = None
+
+    @property
+    def supported_tasks(self):
+        return SUPPORTED_TASKS
+
+    def load_model(self, device, dtype):
+        """Load Chronos-2 pipeline (cached if already loaded)."""
         from chronos import Chronos2Pipeline
 
-        self.task = task
-        self.X_train = X_train
-        self.y_train = y_train
-        self.meta = meta
-
-        # bfloat16 is fine on CUDA but poorly supported on CPU / MPS;
-        # fall back to float32 there so inference doesn't crash or stall.
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.bfloat16 if device == "cuda" else torch.float32
         model_id = f"autogluon/chronos-2-{self.model_size}"
         if not hasattr(self, "_pipeline") or self._loaded_model != model_id:
             self._pipeline = Chronos2Pipeline.from_pretrained(
@@ -250,14 +213,47 @@ class Solver(BaseSolver):
                 dtype=dtype,
             )
             self._loaded_model = model_id
+        return self._pipeline
 
-    def run(self, _):
+    def forecast_batch(self, inputs):
+        """Chronos-specific batch prediction.
+
+        Parameters
+        ----------
+        inputs : list of torch.Tensor
+            Each tensor shape (C, T_cutoff)
+
+        Returns
+        -------
+        list of torch.Tensor
+            Each tensor shape (C, Q, H)
+        """
+        with torch.no_grad():
+            return self.model.predict(inputs, prediction_length=self.prediction_length)
+
+    def build_adapter(self, task, model):
+        # TODO later: put that code in base_solver.py
+        # and make it rely on .forecast(), .embed() and .time_embed() only, once those are all properly coded
+        """Create task-specific adapter for Chronos."""
         pred_len = self.meta.get("prediction_length", 1)
-        if self.task == "forecasting":
-            self._adapter = _ChronosForecaster(self._pipeline, pred_len)
 
-        elif self.task == "classification":
-            base_encoder = ChronosEncoder(self._pipeline, layer=self.layer)
+        if task == "forecasting":
+            self.prediction_length = pred_len
+            quantile_levels = tuple(float(q) for q in model.quantiles)
+
+            # Create a simple adapter that calls self.forecast()
+            class _ForecastAdapter(BaseTSFMAdapter):
+                def __init__(self, solver, quantile_levels):
+                    self.solver = solver
+                    self.quantile_levels = quantile_levels
+
+                def predict(self, x: ForecastInput) -> ForecastOutput:
+                    return self.solver.forecast(x, self.solver.prediction_length, self.quantile_levels)
+
+            return _ForecastAdapter(self, quantile_levels)
+
+        elif task == "classification":
+            base_encoder = ChronosEncoder(model, layer=self.layer)
             encoder = Encoder(base_encoder, POOLERS[self.pooler]())
             adapter = LinearProbeAdapter(
                 encoder,
@@ -265,14 +261,23 @@ class Solver(BaseSolver):
                 n_classes=self.meta.get("n_classes"),
             )
             adapter.fit(self.X_train, self.y_train)
-            self._adapter = adapter
+            return adapter
 
-        elif self.task == "anomaly_detection":
+        elif task == "anomaly_detection":
             # AD uses one-step-ahead forecasts.
-            self._adapter = ForecastResidualAdapter(
-                _ChronosForecaster(self._pipeline, prediction_length=1),
-                prediction_length=1,
-            )
+            self.prediction_length = 1
+            quantile_levels = (0.5,)
 
-    def get_result(self):
-        return {"model": self._adapter}
+            # Create a forecaster adapter for residual-based anomaly detection
+            class _ForecasterForAD(BaseTSFMAdapter):
+                def __init__(self, solver, quantile_levels):
+                    self.solver = solver
+                    self.quantile_levels = quantile_levels
+
+                def predict(self, x: ForecastInput) -> ForecastOutput:
+                    return self.solver.forecast(x, 1, self.quantile_levels)
+
+            forecaster = _ForecasterForAD(self, quantile_levels)
+            return ForecastResidualAdapter(forecaster, prediction_length=1)
+
+        raise ValueError(f"Unknown task: {task}")

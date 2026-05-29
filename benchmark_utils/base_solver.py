@@ -1,0 +1,296 @@
+"""Abstract base solver for Time Series Foundation Models (TSFM).
+
+This module provides a template for implementing TSFM solvers that handle
+common boilerplate such as:
+  - Device management (CUDA vs CPU, dtype selection)
+  - Model loading and caching in set_objective (untimed)
+  - Adapter setup based on task type
+  - Metadata and data storage
+  - Forecast batching for multi-series, multi-cutoff predictions
+
+Subclasses should implement:
+  - supported_tasks: set of task names the model supports
+  - load_model(): load/initialize the model for the given device
+  - build_adapter(): create task-specific adapters
+"""
+
+import numpy as np
+import torch
+from abc import abstractmethod
+from benchopt import BaseSolver
+
+from benchmark_utils.inputs import ForecastInput
+from benchmark_utils.outputs import ForecastOutput
+
+
+class BaseTSFMSolver(BaseSolver):
+    """Template solver for Time Series Foundation Models.
+
+    Handles common initialization, device management, and adapter setup.
+    Subclasses implement model-specific loading and adapter construction.
+
+    Attributes
+    ----------
+    supported_tasks : set of str
+        Subset of {"forecasting", "classification", "anomaly_detection"}
+        that this solver supports. Must be set by subclass.
+    
+    task : str
+        Current task being solved (set in set_objective).
+    
+    X_train, y_train : array-like
+        Training data (set in set_objective).
+    
+    meta : dict
+        Task metadata like prediction_length, n_classes, etc.
+    
+    model : object
+        The loaded TSFM model (cached across multiple set_objective calls).
+    
+    device : str
+        "cuda" or "cpu", automatically selected in set_objective.
+    
+    dtype : torch.dtype
+        torch.float32 or torch.bfloat16 (bfloat16 on CUDA, float32 elsewhere).
+    """
+
+    sampling_strategy = "run_once"
+
+    def __init__(self, **kwargs):
+        """Initialize solver with model-specific setup.
+
+        Subclasses can override this method to perform model-specific
+        initialization. If overriding, call super().__init__(**kwargs).
+        """
+        # Initialize cached model state
+        self._loaded_model = None
+        self.model = None
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    @property
+    @abstractmethod
+    def supported_tasks(self):
+        """Return a set of supported task names.
+        
+        Returns
+        -------
+        set of str
+            Subset of {"forecasting", "classification", "anomaly_detection"}
+        """
+        pass
+
+    @abstractmethod
+    def load_model(self, device, dtype):
+        """Load and return the TSFM model.
+
+        Called once per model variant (cached by subclass if needed).
+        This method is called inside set_objective and is NOT timed.
+
+        Parameters
+        ----------
+        device : str
+            "cuda" or "cpu"
+        dtype : torch.dtype
+            torch.bfloat16 or torch.float32
+
+        Returns
+        -------
+        model : object
+            The loaded TSFM model
+        """
+        pass
+
+    @abstractmethod
+    def build_adapter(self, task, model):
+        """Create and optionally fit a task-specific adapter.
+
+        Called from run() for the current task and model.
+        If the adapter requires fitting (e.g., LinearProbe), do it here.
+
+        Parameters
+        ----------
+        task : str
+            One of the supported tasks
+        model : object
+            The loaded TSFM model
+
+        Returns
+        -------
+        adapter : BaseTSFMAdapter
+            A fitted (or zero-shot) adapter ready for prediction
+        """
+        pass
+
+    def skip(self, task, **kwargs):
+        """Skip unsupported tasks."""
+        if task not in self.supported_tasks:
+            return True, f"{self.name} solver does not support task={task!r}"
+        return False, None
+
+    def set_objective(self, X_train, y_train, task, **meta):
+        """Initialize solver for a task.
+
+        Automatically handles device selection, dtype choice, and model
+        loading/caching. Subclasses can override to add custom logic
+        *after* calling super().set_objective(...).
+
+        Parameters
+        ----------
+        X_train : array-like
+            Training data
+        y_train : array-like
+            Training labels (may be None for unsupervised tasks)
+        task : str
+            Task name
+        **meta : dict
+            Task metadata (prediction_length, n_classes, etc.)
+        """
+        self.task = task
+        self.X_train = X_train
+        self.y_train = y_train
+        self.meta = meta
+
+        # Select device and dtype
+        # bfloat16 is well-supported on CUDA but poorly on CPU/MPS;
+        # fall back to float32 elsewhere.
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
+
+        # Load model (caching is subclass responsibility via load_model)
+        self.model = self.load_model(self.device, self.dtype)
+
+    def run(self, _):
+        """Build and fit task-specific adapter.
+
+        Calls build_adapter() to create the adapter for the current task.
+        Subclasses can override to add custom logic, but should typically
+        just call super().run(_) to set up self._adapter.
+        """
+        self._adapter = self.build_adapter(self.task, self.model)
+
+    def get_result(self):
+        """Return the fitted adapter."""
+        return {"model": self._adapter}
+
+    def forecast_batch(self, inputs):
+        """Forecast on a batch of prepared inputs.
+
+        Subclasses must implement this to call their model's inference.
+
+        Parameters
+        ----------
+        inputs : list of torch.Tensor
+            Prepared input tensors (model-specific format)
+
+        Returns
+        -------
+        list of torch.Tensor
+            Model output tensors (model-specific format)
+        """
+        raise NotImplementedError(
+            "Subclasses must implement forecast_batch to call their model"
+        )
+
+    def forecast(self, x, prediction_length, quantile_levels):
+        """Generic per-series, per-cutoff forecast batching.
+
+        Handles input preparation, batching, and output reconstruction.
+        Calls forecast_batch() for actual model inference.
+
+        Parameters
+        ----------
+        x : ForecastInput
+            Input with series list and per-series cutoff indexes
+        prediction_length : int
+            Forecast horizon
+        quantile_levels : tuple of float
+            Quantile levels in outputs
+
+        Returns
+        -------
+        ForecastOutput
+            With per-series quantile arrays
+        """
+        return self.batch_forecast(
+            x,
+            self.forecast_batch,
+            prediction_length,
+            quantile_levels,
+        )
+
+    @staticmethod
+    def batch_forecast(
+        x,
+        forecast_batch_fn,
+        prediction_length,
+        quantile_levels,
+        prepare_input_fn=None,
+        extract_output_fn=None,
+    ):
+        """Generic per-series, per-cutoff batching for forecasts.
+
+        Parameters
+        ----------
+        x : ForecastInput
+            Input with series list and per-series cutoff indexes
+        forecast_batch_fn : callable
+            Function(inputs: list) -> list that does model inference.
+            Called once with all prepared inputs.
+        prediction_length : int
+            Forecast horizon
+        quantile_levels : tuple of float
+            Quantile levels in outputs
+        prepare_input_fn : callable, optional
+            Function to transform history (T, C) -> model input.
+            Default: transpose to (C, T) and convert to torch tensor.
+        extract_output_fn : callable, optional
+            Function to transform model output -> (C, Q, H) numpy array.
+            Default: convert tensor to numpy and keep shape.
+
+        Returns
+        -------
+        ForecastOutput
+            With per-series quantile arrays
+        """
+        if prepare_input_fn is None:
+            prepare_input_fn = lambda hist: torch.from_numpy(hist.T)
+
+        if extract_output_fn is None:
+            extract_output_fn = lambda pred: pred.float().cpu().numpy()
+
+        inputs = []
+        layout = []  # (series_idx, cutoff_idx) per input
+        per_series_shape = []  # (C, n_cutoffs) per series
+
+        for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
+            series = np.asarray(series, dtype=np.float32)
+            if series.ndim == 1:
+                series = series[:, None]
+            _, C = series.shape
+            per_series_shape.append((C, len(cutoffs)))
+
+            for cutoff_idx, cutoff in enumerate(cutoffs):
+                hist = series[:cutoff]  # (T_cutoff, C)
+                inputs.append(prepare_input_fn(hist))
+                layout.append((series_idx, cutoff_idx))
+
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
+
+        forecast = forecast_batch_fn(inputs)
+        # forecast: list of model outputs aligned with inputs
+
+        Q = len(quantile_levels)
+        per_series = [
+            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
+            for C, n_cutoffs in per_series_shape
+        ]
+
+        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
+            arr = extract_output_fn(pred)  # (C, Q, H)
+            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=quantile_levels
+        )
