@@ -9,8 +9,12 @@ References:
     https://github.com/datadog/toto
 """
 
-import numpy as np
 from benchopt import BaseSolver
+
+from toto2 import Toto2Model
+import numpy as np
+import torch
+
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -282,8 +286,6 @@ class Solver(BaseSolver):
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
-        import torch
-        from toto2 import Toto2Model
 
         self.task = task
         self.X_train = X_train

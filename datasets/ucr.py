@@ -16,6 +16,7 @@ n_classes : int
 from benchopt import BaseDataset
 
 import numpy as np
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
 
@@ -55,8 +56,9 @@ class Dataset(BaseDataset):
         y_te_enc = le.transform(y_te).astype(np.int64)
 
         if self.debug:
-            X_tr = X_tr[:20]
-            y_tr_enc = y_tr_enc[:20]
+            X_tr, _, y_tr_enc, _ = train_test_split(
+                X_tr, y_tr_enc, train_size=20,
+            )
 
         # Convert to list of (T, C) arrays so variable-length datasets work too
         X_train, X_test = list(X_tr), list(X_te)

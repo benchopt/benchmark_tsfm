@@ -148,6 +148,10 @@ class Dataset(BaseDataset):
         "n_classes": [5],
     }
 
+    test_parameters = {
+        "record_ids": [["100"]],
+    }
+
     def get_data(self):
         data_dir = fetch_mitdb()
 

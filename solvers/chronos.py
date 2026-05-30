@@ -103,7 +103,6 @@ class _ChronosForecaster(BaseTSFMAdapter):
         return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
 
 
-
 class _ChronosEmbedEncoder(UnpooledEncoder):
     """Default path — uses ``ChronosPipeline.embed``.
 

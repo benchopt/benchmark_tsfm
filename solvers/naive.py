@@ -98,8 +98,14 @@ class Solver(BaseSolver):
         "seasonality": [1],
     }
 
-    SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection",
-                       "event_detection"}
+    SUPPORTED_TASKS = {
+        "forecasting", "classification", "anomaly_detection",
+        "event_detection",
+    }
+    test_config = {"dataset": {
+        "name": ["monash", "ucr", "ecg", "mitdb"],
+        "debug": True
+    }}
 
     def skip(self, task, **kwargs):
         if task not in self.SUPPORTED_TASKS:

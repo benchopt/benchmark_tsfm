@@ -45,6 +45,10 @@ class Solver(BaseSolver):
         "classifier": ["logistic_regression"],
     }
 
+    # Mantis only supports classification, so its tests run on UCR rather
+    # than the benchmark's default forecasting test dataset (monash).
+    test_config = {"dataset": {"name": "ucr", "debug": True}}
+
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"Mantis solver does not support task={task!r}"
