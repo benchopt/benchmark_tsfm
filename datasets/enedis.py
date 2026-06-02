@@ -77,9 +77,7 @@ _DEFAULT_HORIZON = {"30min": 480, "6h": 40, "D": 10}
 
 def _stack_channels(seq) -> np.ndarray:
     """Stack a GluonTS ``Sequence(Sequence(float32))`` cell into ``(T, C)``."""
-    return np.stack(
-        [np.asarray(channel, dtype=np.float32) for channel in seq], axis=-1
-    )
+    return np.stack([np.asarray(channel, dtype=np.float32) for channel in seq], axis=-1)
 
 
 class Dataset(BaseDataset):
@@ -111,8 +109,7 @@ class Dataset(BaseDataset):
     def get_data(self):
         if self.freq not in _ITEM_ID:
             raise ValueError(
-                f"Unknown freq {self.freq!r}; expected one of "
-                f"{sorted(_ITEM_ID)}."
+                f"Unknown freq {self.freq!r}; expected one of {sorted(_ITEM_ID)}."
             )
 
         df = pd.read_parquet(_HF_PARQUET)
@@ -150,12 +147,12 @@ class Dataset(BaseDataset):
             cutoffs = cutoffs[:1]
 
         y_windows = np.stack(
-            [target[c: c + pred_len] for c in cutoffs], axis=0
+            [target[c : c + pred_len] for c in cutoffs], axis=0
         )  # (n_cutoffs, H, 1)
 
         first_cut = min(cutoffs)
         X_train = [target[:first_cut]]
-        y_train = [target[first_cut: first_cut + pred_len]]
+        y_train = [target[first_cut : first_cut + pred_len]]
 
         covariates = Covariates(
             static_covars=[],

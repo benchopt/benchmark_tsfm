@@ -13,6 +13,7 @@ task    : "classification"
 metrics : ["accuracy", "balanced_accuracy", "f1_weighted"]
 n_classes : int
 """
+
 from benchopt import BaseDataset
 
 import numpy as np
@@ -42,7 +43,6 @@ class Dataset(BaseDataset):
     }
 
     def get_data(self):
-
         loader = UCR_UEA_datasets()
         X_tr, y_tr, X_te, y_te = loader.load_dataset(self.dataset_name)
 
@@ -57,7 +57,14 @@ class Dataset(BaseDataset):
 
         if self.debug:
             X_tr, _, y_tr_enc, _ = train_test_split(
-                X_tr, y_tr_enc, train_size=20,
+                X_tr,
+                y_tr_enc,
+                train_size=20,
+            )
+            X_te, _, y_te_enc, _ = train_test_split(
+                X_te,
+                y_te_enc,
+                train_size=20,
             )
 
         # Convert to list of (T, C) arrays so variable-length datasets work too

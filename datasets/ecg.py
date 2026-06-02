@@ -27,8 +27,9 @@ from benchmark_utils.metrics import AD_METRICS
 def _load_records(db_path, record_ids, number):
     db_path = Path(db_path)
     if record_ids in (None, "all", ["all"]):
-        record_ids = [f.stem for f in db_path.glob("*.out")
-                      if f.stem != "MBA_ECG14046_data"]
+        record_ids = [
+            f.stem for f in db_path.glob("*.out") if f.stem != "MBA_ECG14046_data"
+        ]
     if number > 0:
         record_ids = record_ids[:number]
 
@@ -74,18 +75,12 @@ class Dataset(BaseDataset):
     }
 
     def get_data(self):
-
-        # Allow reuse of the download helper from benchmark_ad if present,
-        # otherwise fall back to the data path directly.
-        try:
-            path = fetch_tsb_uad("ECG")
-        except ImportError:
-            path = get_data_path("ECG")
+        path = fetch_tsb_uad("ECG")
 
         X_train, X_test, y_test = load_data_tsb_uad(
-            path=path, 
-            records_ids=self.record_ids, 
-            train_ratio=self.train_ratio, 
+            path=path,
+            records_ids=self.record_ids,
+            train_ratio=self.train_ratio,
             number=self.number,
         )
 

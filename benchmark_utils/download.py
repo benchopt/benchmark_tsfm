@@ -1,5 +1,5 @@
-"""Shared download helper for the TSB-UAD public dataset bundle.
-"""
+"""Shared download helper for the TSB-UAD public dataset bundle."""
+
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -9,9 +9,7 @@ from benchopt import config
 
 
 _BUNDLE_URL = "https://www.thedatum.org/datasets/TSB-UAD-Public.zip"
-_BUNDLE_SHA256 = (
-    "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"
-)
+_BUNDLE_SHA256 = "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"
 _BUNDLE_FILENAME = "TSB-UAD-Public.zip"
 _BUNDLE_ROOT = "TSB-UAD-Public"
 
@@ -35,11 +33,14 @@ _SUBDIR = {
     "YAHOO": "YAHOO",
 }
 
-_FILES_EXT = {
-    "YAHOO": '.out',
-    "ECG": '.out',
-    "SVDB": '.out'
+_BASE_NAMES = {
+    "YAHOO": "Yahoo_",
+    "ECG": "MBA_ECG",
+    "SVDB": "8",
 }
+
+_FILES_EXT = {"YAHOO": ".out", "ECG": ".out", "SVDB": ".out"}
+
 
 def fetch_tsb_uad(name: str) -> Path:
     """Return the local directory holding TSB-UAD's ``.out`` files for *name*.
@@ -50,12 +51,12 @@ def fetch_tsb_uad(name: str) -> Path:
     """
     if name not in _SUBDIR:
         raise KeyError(
-            f"{name!r} is not a TSB-UAD dataset name. "
-            f"Known names: {sorted(_SUBDIR)}"
+            f"{name!r} is not a TSB-UAD dataset name. Known names: {sorted(_SUBDIR)}"
         )
 
     try:
         import tqdm  # noqa: F401
+
         progressbar = True
     except ImportError:
         progressbar = False
@@ -86,7 +87,7 @@ def fetch_tsb_uad(name: str) -> Path:
 def load_data_tsb_uad(path, records_ids, train_ratio, number):
     """
     Load series from a dataset given the path, the record ids
-    to get and a training ratio. 
+    to get and a training ratio.
     """
     # files names
     path = Path(path)
@@ -96,8 +97,7 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
     # get ids of records
     if records_ids in (None, "all", ["all"]):
         records_ids = [
-            f.stem for f in path.glob('*'+extension)
-            if f.stem.startswith(base_name)
+            f.stem for f in path.glob("*" + extension) if f.stem.startswith(base_name)
         ]
 
     if number in (None, -1):
@@ -105,7 +105,6 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
 
     X_train, X_test, y_test = [], [], []
     for i, id in enumerate(records_ids):
-
         if i >= number:
             break
 
@@ -122,9 +121,9 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
         X_test.append(data[split:, 0].astype(np.float32))
         y_test.append(data[split:, 1].astype(np.int32))
 
-    return X_train, X_test, y_test       
+    return X_train, X_test, y_test
 
-  
+
 def fetch_mitdb() -> Path:
     """Return the local directory holding MIT-BIH Arrhythmia Database files.
 

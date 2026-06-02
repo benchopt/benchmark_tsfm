@@ -31,25 +31,77 @@ from benchmark_utils.download import fetch_mitdb
 # AAMI beat-type grouping (MIT-BIH annotation symbol → class index)
 BEAT_CLASS = {
     # N group
-    "N": 1, "L": 1, "R": 1, "e": 1, "j": 1,
+    "N": 1,
+    "L": 1,
+    "R": 1,
+    "e": 1,
+    "j": 1,
     # S group
-    "A": 2, "a": 2, "J": 2, "S": 2,
+    "A": 2,
+    "a": 2,
+    "J": 2,
+    "S": 2,
     # V group
-    "V": 3, "E": 3,
+    "V": 3,
+    "E": 3,
     # F group
     "F": 4,
     # Q group
-    "P": 5, "f": 5, "u": 5,
+    "P": 5,
+    "f": 5,
+    "u": 5,
 }
 
 # All 48 standard MIT-BIH record IDs
 MITDB_RECORDS = [
-    "100", "101", "102", "103", "104", "105", "106", "107",
-    "108", "109", "111", "112", "113", "114", "115", "116",
-    "117", "118", "119", "121", "122", "123", "124",
-    "200", "201", "202", "203", "205", "207", "208", "209",
-    "210", "212", "213", "214", "215", "217", "219", "220",
-    "221", "222", "223", "228", "230", "231", "232", "233", "234",
+    "100",
+    "101",
+    "102",
+    "103",
+    "104",
+    "105",
+    "106",
+    "107",
+    "108",
+    "109",
+    "111",
+    "112",
+    "113",
+    "114",
+    "115",
+    "116",
+    "117",
+    "118",
+    "119",
+    "121",
+    "122",
+    "123",
+    "124",
+    "200",
+    "201",
+    "202",
+    "203",
+    "205",
+    "207",
+    "208",
+    "209",
+    "210",
+    "212",
+    "213",
+    "214",
+    "215",
+    "217",
+    "219",
+    "220",
+    "221",
+    "222",
+    "223",
+    "228",
+    "230",
+    "231",
+    "232",
+    "233",
+    "234",
 ]
 
 
@@ -77,8 +129,7 @@ def _load_record(record_id, data_dir):
     return signal, ann.sample, ann.symbol
 
 
-def _annotations_to_events(n_samples, ann_samples, ann_symbols, beat_window,
-                           n_classes):
+def _annotations_to_events(n_samples, ann_samples, ann_symbols, beat_window, n_classes):
     """Convert beat annotations to an object-detection target array.
 
     Parameters
@@ -172,17 +223,25 @@ class Dataset(BaseDataset):
             split = max(1, int(len(signal) * self.train_ratio))
 
             for seg_signal, start, end, Xl, yl in [
-                (signal[:split],  0,     split,       X_train, y_train),
-                (signal[split:],  split, len(signal), X_test,  y_test),
+                (signal[:split], 0, split, X_train, y_train),
+                (signal[split:], split, len(signal), X_test, y_test),
             ]:
-                seg_ann = ann_samples[(ann_samples >= start) & (ann_samples < end)] - start
-                seg_sym = [s for s, idx in zip(ann_symbols, ann_samples)
-                           if start <= idx < end]
+                seg_ann = (
+                    ann_samples[(ann_samples >= start) & (ann_samples < end)] - start
+                )
+                seg_sym = [
+                    s for s, idx in zip(ann_symbols, ann_samples) if start <= idx < end
+                ]
                 Xl.append(seg_signal)
-                yl.append(_annotations_to_events(
-                    len(seg_signal), seg_ann, seg_sym,
-                    self.beat_window, self.n_classes,
-                ))
+                yl.append(
+                    _annotations_to_events(
+                        len(seg_signal),
+                        seg_ann,
+                        seg_sym,
+                        self.beat_window,
+                        self.n_classes,
+                    )
+                )
 
         return dict(
             X_train=X_train,

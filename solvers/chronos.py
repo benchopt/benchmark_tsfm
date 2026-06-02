@@ -109,6 +109,7 @@ class _ChronosForecaster(BaseTSFMAdapter):
             quantiles=per_series, quantile_levels=self.quantile_levels
         )
 
+
 class _ChronosEmbedEncoder(UnpooledEncoder):
     """Default path — uses ``ChronosPipeline.embed``.
 
@@ -261,7 +262,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):

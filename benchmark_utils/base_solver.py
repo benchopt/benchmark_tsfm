@@ -1,5 +1,4 @@
-"""Abstract base solver for Time Series Foundation Models (TSFM).
-"""
+"""Abstract base solver for Time Series Foundation Models (TSFM)."""
 
 import numpy as np
 import torch
@@ -23,25 +22,26 @@ class BaseTSFMSolver(BaseSolver):
     supported_tasks : set of str
         Subset of {"forecasting", "classification", "anomaly_detection"}
         that this solver supports. Must be set by subclass.
-    
+
     task : str
         Current task being solved (set in set_objective).
-    
+
     X_train, y_train : array-like
         Training data (set in set_objective).
-    
+
     meta : dict
         Task metadata like prediction_length, n_classes, etc.
-    
+
     model : object
         The loaded TSFM model (cached across multiple set_objective calls).
-    
+
     device : str
         "cuda" or "cpu", automatically selected in set_objective.
-    
+
     dtype : str | torch.dtype
         The data type of both data and model (default: bfloat16 on CUDA, float32 elsewhere).
     """
+
     supported_tasks: set[Literal["forecasting", "classification", "anomaly_detection"]]
     task: Literal["forecasting", "classification", "anomaly_detection"]
     X_train: Sequence[np.ndarray]
@@ -69,7 +69,7 @@ class BaseTSFMSolver(BaseSolver):
     @abstractmethod
     def supported_tasks(self):
         """Return a set of supported task names.
-        
+
         Returns
         -------
         set of str
@@ -119,7 +119,11 @@ class BaseTSFMSolver(BaseSolver):
         """
         pass
 
-    def skip(self, task: Literal["forecasting", "classification", "anomaly_detection"], **kwargs: Any) -> tuple[bool, str | None]:
+    def skip(
+        self,
+        task: Literal["forecasting", "classification", "anomaly_detection"],
+        **kwargs: Any,
+    ) -> tuple[bool, str | None]:
         """Skip unsupported tasks."""
         if task not in self.supported_tasks:
             return True, f"{self.name} solver does not support task={task!r}"
@@ -199,7 +203,7 @@ class BaseTSFMSolver(BaseSolver):
         self,
         x: ForecastInput,
         prediction_length: int,
-        quantile_levels: tuple[float, ...]
+        quantile_levels: tuple[float, ...],
     ) -> ForecastOutput:
         """Generic per-series, per-cutoff forecast batching.
 
@@ -251,6 +255,4 @@ class BaseTSFMSolver(BaseSolver):
         for (series_idx, cutoff_idx), pred in zip(layout, forecast):
             per_series[series_idx][cutoff_idx] = pred.transpose(1, 2, 0)
 
-        return ForecastOutput(
-            quantiles=per_series, quantile_levels=quantile_levels
-        )
+        return ForecastOutput(quantiles=per_series, quantile_levels=quantile_levels)

@@ -52,7 +52,13 @@ _FREQ_MAP = {
 }
 
 _DEFAULT_HORIZON = {
-    "Y": 6, "Q": 8, "M": 12, "W": 13, "D": 14, "H": 24, "T": 60,
+    "Y": 6,
+    "Q": 8,
+    "M": 12,
+    "W": 13,
+    "D": 14,
+    "H": 24,
+    "T": 60,
 }
 
 
@@ -84,7 +90,6 @@ class Dataset(BaseDataset):
     }
 
     def get_data(self):
-
         df, meta = load_forecasting(self.dataset_name, return_metadata=True)
         # df columns: series_name, start_timestamp, series_value
         # meta keys:  frequency, forecast_horizon,
@@ -96,8 +101,7 @@ class Dataset(BaseDataset):
         pred_len = self.prediction_length
         if pred_len is None:
             pred_len = int(
-                meta.get("forecast_horizon")
-                or _DEFAULT_HORIZON.get(freq, 10)
+                meta.get("forecast_horizon") or _DEFAULT_HORIZON.get(freq, 10)
             )
 
         series_list = []
@@ -107,9 +111,7 @@ class Dataset(BaseDataset):
             series_list.append(values.reshape(-1, 1))  # (T, 1) univariate
 
         if not series_list:
-            raise ValueError(
-                f"No series found for dataset {self.dataset_name!r}."
-            )
+            raise ValueError(f"No series found for dataset {self.dataset_name!r}.")
 
         # Training portion: everything except the last test windows
         test_len = pred_len * self.n_windows
@@ -119,13 +121,11 @@ class Dataset(BaseDataset):
                 continue
             train_end = max(1, ts.shape[0] - test_len)
             X_train.append(ts[:train_end])
-            y_train_list.append(ts[train_end: train_end + pred_len])
+            y_train_list.append(ts[train_end : train_end + pred_len])
             full_series.append(ts)
 
         if not full_series:
-            raise ValueError(
-                "All series are shorter than prediction_length."
-            )
+            raise ValueError("All series are shorter than prediction_length.")
 
         n_windows = 1 if self.debug else self.n_windows
         X_test, cutoff_indexes, y_test = make_forecasting_splits(
@@ -142,8 +142,18 @@ class Dataset(BaseDataset):
             cutoff_indexes=cutoff_indexes,
             covariates=Covariates(),
             task="forecasting",
-            metrics=["mae", "mse", "rmse", "mase", "smape",
-                     "crps", "wql", "mcis", "pinball", "skill_score_ratio"],
+            metrics=[
+                "mae",
+                "mse",
+                "rmse",
+                "mase",
+                "smape",
+                "crps",
+                "wql",
+                "mcis",
+                "pinball",
+                "skill_score_ratio",
+            ],
             prediction_length=pred_len,
             freq=freq,
             seasonality=seasonality,

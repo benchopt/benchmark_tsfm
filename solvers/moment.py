@@ -13,9 +13,10 @@ References:
     https://huggingface.co/AutonLab/MOMENT-1-large
 """
 
-import numpy as np
-import torch
 from benchopt import BaseSolver
+import torch
+import numpy as np
+from momentfm import MOMENTPipeline
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -29,12 +30,6 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
-try:
-    from momentfm import MOMENTPipeline
-
-    HAS_MOMENT = True
-except ImportError:
-    HAS_MOMENT = False
 
 SUPPORTED_TASKS = {"forecasting", "classification"}
 
@@ -177,21 +172,18 @@ class Solver(BaseSolver):
 
     parameters = {
         "checkpoint": ["AutonLab/MOMENT-1-large"],
-        "task_config": ["forecasting"],  # forecasting or classification
         "pooler": ["mean"],  # pooler for classification embeddings
         "batch_size": [32],
         "classifier": ["log_reg"],
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"Moment solver does not support task={task!r}"
-        if not HAS_MOMENT:
-            return True, "momentfm package not installed"
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):

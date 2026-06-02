@@ -43,7 +43,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     # Mantis only supports classification, so its tests run on UCR rather
@@ -180,7 +180,6 @@ class Solver(BaseSolver):
         self._adapter = LinearProbeAdapter(
             encoder=self,
             task=self.task,
-            max_iter=self.max_iter,
             n_estimators=self.n_estimators,
             classifier=self.classifier,
         )

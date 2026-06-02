@@ -76,9 +76,9 @@ class ForecastOutput:
             A new (frozen) instance with ``quantiles = [stacked]``.
         """
         windows = []
-        for arr in self.quantiles:          # arr: (n_cutoffs_i, Q, H, C)
+        for arr in self.quantiles:  # arr: (n_cutoffs_i, Q, H, C)
             for k in range(arr.shape[0]):
-                windows.append(arr[k])      # (Q, H, C)
+                windows.append(arr[k])  # (Q, H, C)
         if not windows:
             # Edge case: no predictions at all — return empty output
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)

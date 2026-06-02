@@ -280,7 +280,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):
@@ -289,7 +289,6 @@ class Solver(BaseSolver):
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
-
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
