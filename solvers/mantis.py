@@ -40,10 +40,7 @@ class Solver(BaseSolver):
         "batch_size": [32],
         "interpolate_to": [512],
         "classifier": ["random_forest"],
-        "penalty": ["l2"],
-        "C": [1.0],
-        "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def _extract_embeddings(self, X):
@@ -84,7 +81,8 @@ class Solver(BaseSolver):
                 else:
                     embedding_dim = 128
                 all_embeddings.append(
-                    np.zeros((batch_end - batch_idx, embedding_dim), dtype=np.float32)
+                    np.zeros((batch_end - batch_idx, embedding_dim),
+                             dtype=np.float32)
                 )
 
         # Concatenate all embeddings
@@ -157,7 +155,8 @@ class Solver(BaseSolver):
                 network = network.from_pretrained(self.checkpoint)
 
                 self._network = network
-                self._trainer = MantisTrainer(device=device, network=self._network)
+                self._trainer = MantisTrainer(
+                    device=device, network=self._network)
                 self._loaded_checkpoint = self.checkpoint
                 print(
                     f"✓ Mantis checkpoint loaded: {self.checkpoint} on device: {device}"
@@ -176,7 +175,6 @@ class Solver(BaseSolver):
         self._adapter = LinearProbeAdapter(
             encoder=self,
             task=self.task,
-            max_iter=self.max_iter,
             n_estimators=self.n_estimators,
             classifier=self.classifier,
         )
