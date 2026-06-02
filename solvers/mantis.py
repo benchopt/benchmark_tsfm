@@ -40,6 +40,9 @@ class Solver(BaseSolver):
         "batch_size": [32],
         "interpolate_to": [512],
         "classifier": ["random_forest"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
         "n_estimators": [100],
     }
 
@@ -175,8 +178,11 @@ class Solver(BaseSolver):
         self._adapter = LinearProbeAdapter(
             encoder=self,
             task=self.task,
-            n_estimators=self.n_estimators,
             classifier=self.classifier,
+            penalty=self.penalty,
+            C=self.C,
+            alpha=self.alpha,
+            n_estimators=self.n_estimators,
         )
         self._adapter.fit(self.X_train, self.y_train)
 
