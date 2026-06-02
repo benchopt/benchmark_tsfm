@@ -119,7 +119,6 @@ class Dataset(BaseDataset):
 
     name = "HGD"
 
-    requirements = ["pip::moabb", "pandas", "pip::braindecode==1.5.1"]
     requirements = ["pip::moabb", "pip::pandas", "pip::braindecode"]
 
     parameters = {

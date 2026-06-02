@@ -65,37 +65,26 @@ class Solver(BaseSolver):
         n_channels = X0.shape[1] if X0.ndim == 2 else 1
         n_classes = int(meta.get("n_classes", len(np.unique(y_train))))
 
-        # Build the network once per dataset configuration.
-        should_reload = (
-            not hasattr(self, "_network")
-            or getattr(self, "_n_channels", None) != n_channels
-            or getattr(self, "_n_classes", None) != n_classes
-            or getattr(self, "_n_times", None) != n_times
-        )
-        if should_reload:
-            try:
-                from braindecode.models import EEGNet
+        # Build the network
 
-                network = EEGNet(
-                    n_chans=n_channels,
-                    n_outputs=n_classes,
-                    n_times=n_times,
-                )
-                network = network.to(device)
+        try:
+            from braindecode.models import EEGNet
 
-                self._network = network
-                self._n_channels = n_channels
-                self._n_classes = n_classes
-                self._n_times = n_times
-                print(
-                    f"✓ EEGNet built: C={n_channels}, T={n_times}, "
-                    f"n_classes={n_classes} on device: {device}"
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to build EEGNet: {e}. Make sure braindecode "
-                    "is installed."
-                )
+            network = EEGNet(
+                n_chans=n_channels,
+                n_outputs=n_classes,
+                n_times=n_times,
+            )
+            self._network = network.to(device)
+            print(
+                f"✓ EEGNet built: C={n_channels}, T={n_times}, "
+                f"n_classes={n_classes} on device: {device}"
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to build EEGNet: {e}. Make sure braindecode "
+                "is installed."
+            )
 
         self._device = device
         self._optimizer = torch.optim.Adam(
