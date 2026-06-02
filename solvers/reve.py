@@ -40,8 +40,7 @@ class Solver(BaseSolver):
         "pos_bank_checkpoint": ["brain-bzh/reve-positions"],
         "batch_size": [16],
         "n_estimators": [100],
-        "max_iter": [1000],
-        "classifier": ["logistic_regression"],
+        "classifier": ["log_reg"],
     }
 
     def skip(self, task, **kwargs):
@@ -134,7 +133,6 @@ class Solver(BaseSolver):
             encoder=self,
             task=self.task,
             classifier=self.classifier,
-            max_iter=self.max_iter,
             n_estimators=self.n_estimators,
         )
         self._adapter.fit(self.X_train, self.y_train)
