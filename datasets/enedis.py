@@ -47,7 +47,6 @@ from benchopt import BaseDataset
 
 from benchmark_utils.covariates import Covariates
 
-
 _HF_PARQUET = (
     "hf://datasets/theforecastingcompany/enedis-with-holidays/"
     "data/train-00000-of-00001.parquet"

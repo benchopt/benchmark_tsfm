@@ -25,8 +25,8 @@ extra   : n_classes (int)  K above
 
 import numpy as np
 from benchopt import BaseDataset
-from benchmark_utils.download import fetch_mitdb
 
+from benchmark_utils.download import fetch_mitdb
 
 # AAMI beat-type grouping (MIT-BIH annotation symbol → class index)
 BEAT_CLASS = {

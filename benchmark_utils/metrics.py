@@ -17,14 +17,13 @@ event_detection    : metric(y_true, y_pred, **kw) -> float
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     f1_score,
     roc_auc_score,
-    average_precision_score,
 )
 
 from benchmark_utils.outputs import ForecastOutput
-
 
 # ---------------------------------------------------------------------------
 # Forecasting — internal helpers

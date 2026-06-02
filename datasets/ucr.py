@@ -14,9 +14,8 @@ metrics : ["accuracy", "balanced_accuracy", "f1_weighted"]
 n_classes : int
 """
 
-from benchopt import BaseDataset
-
 import numpy as np
+from benchopt import BaseDataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets

@@ -48,7 +48,9 @@ class ForecastOutput:
 
     @property
     def point(self) -> Sequence[np.ndarray]:
-        """Best point estimate per series — median when available, else mean across quantiles.
+        """Best point estimate per series.
+
+        By default, use the median when available, else mean across quantiles.
 
         Each entry has shape ``(n_cutoffs_i, prediction_length, C)``.
         """

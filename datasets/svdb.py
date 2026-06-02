@@ -1,9 +1,7 @@
-import numpy as np
-import pandas as pd
-from pathlib import Path
 
 from benchopt import BaseDataset
 from benchopt.config import get_data_path
+
 from benchmark_utils.download import fetch_tsb_uad, load_data_tsb_uad
 from benchmark_utils.metrics import AD_METRICS
 

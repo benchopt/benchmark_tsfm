@@ -1,12 +1,11 @@
 """Shared download helper for the TSB-UAD public dataset bundle."""
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 import pooch
-
 from benchopt import config
-
 
 _BUNDLE_URL = "https://www.thedatum.org/datasets/TSB-UAD-Public.zip"
 _BUNDLE_SHA256 = "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"

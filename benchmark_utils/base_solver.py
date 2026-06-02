@@ -1,10 +1,10 @@
 """Abstract base solver for Time Series Foundation Models (TSFM)."""
 
+from abc import abstractmethod
+from typing import Any, Literal, Sequence
+
 import numpy as np
 import torch
-from abc import abstractmethod
-from typing import Any, Callable, Literal, Sequence
-
 from benchopt import BaseSolver
 
 from benchmark_utils.inputs import ForecastInput
@@ -39,7 +39,8 @@ class BaseTSFMSolver(BaseSolver):
         "cuda" or "cpu", automatically selected in set_objective.
 
     dtype : str | torch.dtype
-        The data type of both data and model (default: bfloat16 on CUDA, float32 elsewhere).
+        The data type of both data and model.
+        Default to bfloat16 on CUDA, float32 elsewhere.
     """
 
     supported_tasks: set[Literal["forecasting", "classification", "anomaly_detection"]]

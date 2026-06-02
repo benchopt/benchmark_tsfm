@@ -16,6 +16,7 @@ targets         : List[np.ndarray (n_cutoffs_i, prediction_length, C)]
 """
 
 from typing import List, Optional, Tuple
+
 import numpy as np
 
 

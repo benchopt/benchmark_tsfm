@@ -9,12 +9,10 @@ References:
     https://github.com/datadog/toto
 """
 
-from benchopt import BaseSolver
-
-from toto2 import Toto2Model
 import numpy as np
 import torch
-
+from benchopt import BaseSolver
+from toto2 import Toto2Model
 
 from benchmark_utils.adapters import (
     Encoder,

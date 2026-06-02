@@ -32,12 +32,11 @@ seasonality     : int  (seasonal period used for MASE)
 """
 
 import numpy as np
+from aeon.datasets import load_forecasting
 from benchopt import BaseDataset
 
-from aeon.datasets import load_forecasting
 from benchmark_utils.covariates import Covariates
 from benchmark_utils.windowing import make_forecasting_splits
-
 
 # Map aeon frequency strings → pandas-style freq codes and MASE seasonality
 _FREQ_MAP = {

@@ -13,9 +13,9 @@ References:
     https://huggingface.co/AutonLab/MOMENT-1-large
 """
 
-from benchopt import BaseSolver
-import torch
 import numpy as np
+import torch
+from benchopt import BaseSolver
 from momentfm import MOMENTPipeline
 
 from benchmark_utils.adapters import (
@@ -29,7 +29,6 @@ from benchmark_utils.adapters import (
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
-
 
 SUPPORTED_TASKS = {"forecasting", "classification"}
 

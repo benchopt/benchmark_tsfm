@@ -16,7 +16,6 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
-
 # ---------------------------------------------------------------------------
 # Adapter implementations
 # ---------------------------------------------------------------------------

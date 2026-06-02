@@ -35,7 +35,6 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
-
 SUPPORTED_TASKS = {"forecasting"}
 
 # Map benchmark freq codes to API-accepted pandas-like aliases.
@@ -240,7 +239,8 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             mean_col = str(self.model)
             if mean_col not in forecast_df.columns:
                 raise ValueError(
-                    f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
+                    "TFC API response missing expected columns;"
+                    f" got {list(forecast_df.columns)!r}"
                 )
             levels = [0.5]
             quantile_cols = [mean_col]
