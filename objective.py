@@ -55,7 +55,7 @@ from benchmark_utils.metrics import ALL_METRICS
 class Objective(BaseObjective):
     name = "TSFM Benchmark"
     url = "https://github.com/benchopt/benchmark_tsfm"
-    min_benchopt_version = "1.9"
+    min_benchopt_version = "1.9.2"
 
     # Shared requirements across ALL solvers — solvers declare model-specific
     # extras in their own ``requirements`` list.
