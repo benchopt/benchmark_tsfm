@@ -65,7 +65,12 @@ class Objective(BaseObjective):
 
     # Minimal config for ``benchopt test``
     test_config = {
-        "dataset": {"name": ["monash", "ucr", "yahoo", "mitdb"], "debug": True}
+        "dataset": {
+            # Skipping MITDB for now due to timeout in download
+            "name": [
+                "monash", "ucr", "yahoo",  # "mitdb",
+            ],
+            "debug": True}
     }
 
     # ------------------------------------------------------------------
