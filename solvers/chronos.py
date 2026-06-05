@@ -22,11 +22,9 @@ from benchopt import BaseSolver
 from chronos import ChronosPipeline
 
 from benchmark_utils.adapters import (
+    POOLERS,
     Encoder,
-    LastPooler,
     LinearProbeAdapter,
-    MaxPooler,
-    MeanPooler,
     UnpooledEncoder,
 )
 from benchmark_utils.adapters.base import BaseTSFMAdapter
@@ -35,12 +33,6 @@ from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
 SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
-
-POOLERS = {
-    "mean": MeanPooler,
-    "max": MaxPooler,
-    "last": LastPooler,
-}
 
 
 class _ChronosForecaster(BaseTSFMAdapter):

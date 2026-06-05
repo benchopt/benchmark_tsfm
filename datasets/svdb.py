@@ -9,7 +9,7 @@ from benchmark_utils.metrics import AD_METRICS
 class Dataset(BaseDataset):
     name = "SVDB"
 
-    requirements = ["pip:pooch"]
+    requirements = ["pip::pooch"]
 
     parameters = {
         "record_ids": [["all"]],

@@ -45,6 +45,10 @@ import numpy as np
 import pandas as pd
 from benchopt import BaseDataset
 
+# Requirement checks
+import fsspec  # noqa: F401
+from huggingface_hub import hf_hub_download  # noqa: F401
+
 from benchmark_utils.covariates import Covariates
 
 _HF_PARQUET = (
@@ -97,7 +101,7 @@ class Dataset(BaseDataset):
 
     name = "Enedis"
 
-    requirements = ["pip::huggingface_hub", "pyarrow", "pandas"]
+    requirements = ["pip::huggingface_hub", "fsspec"]
 
     parameters = {
         "freq": ["D", "6h", "30min"],
