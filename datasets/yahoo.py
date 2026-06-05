@@ -7,7 +7,7 @@ from benchmark_utils.metrics import AD_METRICS
 class Dataset(BaseDataset):
     name = "YAHOO"
 
-    requirements = ["pip::pooch"]
+    requirements = ["pip::pooch", "pip::tqdm"]
 
     parameters = {
         "record_ids": [["all"]],

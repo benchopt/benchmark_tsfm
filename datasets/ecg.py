@@ -63,7 +63,7 @@ class Dataset(BaseDataset):
 
     name = "ECG"
 
-    requirements = ["pip::pooch", "pandas"]
+    requirements = ["pip::pooch", "tqdm"]
 
     parameters = {
         "record_ids": [

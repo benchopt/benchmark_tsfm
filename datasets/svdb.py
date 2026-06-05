@@ -9,7 +9,7 @@ from benchmark_utils.metrics import AD_METRICS
 class Dataset(BaseDataset):
     name = "SVDB"
 
-    requirements = ["pip::pooch"]
+    requirements = ["pip::pooch", "pip::tqdm"]
 
     parameters = {
         "record_ids": [["all"]],
@@ -21,10 +21,7 @@ class Dataset(BaseDataset):
     def get_data(self):
         """Load the SVDB dataset."""
 
-        try:
-            path = fetch_tsb_uad("SVDB")
-        except ImportError:
-            path = get_data_path("SVDB")
+        path = fetch_tsb_uad("SVDB")
 
         X_train, X_test, y_test = load_data_tsb_uad(
             path=path,

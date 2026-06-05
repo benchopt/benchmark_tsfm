@@ -4,8 +4,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pooch
 from benchopt import config
+
+import pooch
+import tqdm  # noqa: F401
 
 _BUNDLE_URL = "https://www.thedatum.org/datasets/TSB-UAD-Public.zip"
 _BUNDLE_SHA256 = "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"
@@ -53,13 +55,6 @@ def fetch_tsb_uad(name: str) -> Path:
             f"{name!r} is not a TSB-UAD dataset name. Known names: {sorted(_SUBDIR)}"
         )
 
-    try:
-        import tqdm  # noqa: F401
-
-        progressbar = True
-    except ImportError:
-        progressbar = False
-
     cache_root = Path(config.get_data_path(key=_BUNDLE_ROOT))
     cache_root.mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +67,7 @@ def fetch_tsb_uad(name: str) -> Path:
     registry.fetch(
         _BUNDLE_FILENAME,
         processor=pooch.Unzip(extract_dir="."),
-        progressbar=progressbar,
+        progressbar=True,
     )
 
     subdir = cache_root / _BUNDLE_ROOT / _SUBDIR[name]

@@ -164,7 +164,7 @@ class Solver(BaseSolver):
 
     # moment-fm package required for the model
     requirements = [
-        "pip::moment @ git+https://github.com/moment-timeseries-foundation-model/moment.git",
+        "pip::momentfm @ git+https://github.com/moment-timeseries-foundation-model/moment.git",
     ]
 
     sampling_strategy = "run_once"
