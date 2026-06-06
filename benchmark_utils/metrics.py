@@ -1,11 +1,17 @@
 """
-Metric wrappers for all three tasks.
+Metric wrappers for all four tasks.
 
-Relies on aeon (forecasting metrics), sklearn (classification + AD),
-and a minimal numpy implementation of MASE (not yet in aeon).
+Relies on sklearn (classification + AD) and numpy for forecasting and
+event detection. Forecasting metrics consume a :class:`ForecastOutput`
+so probabilistic metrics (CRPS, WQL, MCIS, Pinball) see the full
+quantile fan; point metrics extract the median internally.
 
-All functions follow the signature:
-    metric(y_true, y_pred, **kwargs) -> float
+Signatures
+----------
+forecasting        : metric(y_true, forecast: ForecastOutput, **kw) -> float
+classification     : metric(y_true, y_pred) -> float
+anomaly_detection  : metric(y_true, y_score) -> float
+event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
 import numpy as np
@@ -17,63 +23,145 @@ from sklearn.metrics import (
     average_precision_score,
 )
 
+from benchmark_utils.outputs import ForecastOutput
+
 
 # ---------------------------------------------------------------------------
-# Forecasting
+# Forecasting — internal helpers
 # ---------------------------------------------------------------------------
 
-def mae(y_true, y_pred):
-    """Mean Absolute Error, averaged over all windows and channels."""
-    return float(np.mean(np.abs(np.array(y_true) - np.array(y_pred))))
+def _stacked(forecast: ForecastOutput):
+    """Return (quantiles (M,H,C,Q), levels (Q,)) — flattening if needed."""
+    if len(forecast.quantiles) != 1:
+        forecast = forecast.flatten()
+    if not forecast.quantiles:
+        raise ValueError("ForecastOutput is empty — no predictions to score")
+    return forecast.quantiles[0], np.asarray(forecast.quantile_levels, dtype=np.float64)
 
 
-def mse(y_true, y_pred):
-    """Mean Squared Error, averaged over all windows and channels."""
-    return float(np.mean((np.array(y_true) - np.array(y_pred)) ** 2))
+def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
+    """Extract (M, H, C) point forecast — median when available, else mean."""
+    quants, levels = _stacked(forecast)
+    if 0.5 in levels:
+        return quants[..., int(np.where(levels == 0.5)[0][0])]
+    return quants.mean(axis=-1)
 
 
-def rmse(y_true, y_pred):
-    return float(np.sqrt(mse(y_true, y_pred)))
-
-
-def mase(y_true, y_pred, y_train, seasonality=1):
-    """Mean Absolute Scaled Error.
-
-    Parameters
-    ----------
-    y_true : array-like (M, H, C) or list of (H, C)
-    y_pred : array-like (M, H, C) or list of (H, C)
-    y_train : list of (T_i, C) training series used to compute the naive scale
-    seasonality : int
-        Seasonal period for the naive seasonal baseline (default 1 = random
-        walk baseline).
-    """
-    y_true = np.array(y_true)   # (M, H, C)
-    y_pred = np.array(y_pred)
-
-    # Scale: MAE of seasonal naive on training data
+def _seasonal_naive_scale(y_train, seasonality: int) -> float:
+    """MAE of the seasonal-naive forecast on training series. Used by MASE."""
     scales = []
     for ts in y_train:
-        ts = np.array(ts)  # (T, C)
+        ts = np.asarray(ts)
         if ts.shape[0] > seasonality:
-            naive_err = np.mean(
-                np.abs(ts[seasonality:] - ts[:-seasonality])
-            )
-            scales.append(naive_err)
-    scale = np.mean(scales) if scales else 1.0
-    if scale == 0:
-        scale = 1.0
-
-    return float(np.mean(np.abs(y_true - y_pred)) / scale)
+            scales.append(float(np.mean(np.abs(ts[seasonality:] - ts[:-seasonality]))))
+    scale = float(np.mean(scales)) if scales else 1.0
+    return scale if scale != 0 else 1.0
 
 
-def smape(y_true, y_pred):
+def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarray:
+    """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
+    quants, levels = _stacked(forecast)            # (M,H,C,Q), (Q,)
+    diff = y_true[..., None] - quants              # (M,H,C,Q)
+    levels_b = levels.reshape(1, 1, 1, -1)
+    loss = np.maximum(levels_b * diff, (levels_b - 1.0) * diff)
+    return loss.mean(axis=(0, 1, 2))               # (Q,)
+
+
+# ---------------------------------------------------------------------------
+# Forecasting — point metrics
+# ---------------------------------------------------------------------------
+
+def mae(y_true, forecast: ForecastOutput, **_):
+    """Mean Absolute Error, averaged over all windows, horizons, channels."""
+    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))))
+
+
+def mse(y_true, forecast: ForecastOutput, **_):
+    """Mean Squared Error, averaged over all windows, horizons, channels."""
+    return float(np.mean((y_true - _point_from_forecast(forecast)) ** 2))
+
+
+def rmse(y_true, forecast: ForecastOutput, **_):
+    return float(np.sqrt(mse(y_true, forecast)))
+
+
+def mase(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
+    """Mean Absolute Scaled Error. Scale is naive-seasonal MAE on y_train."""
+    scale = _seasonal_naive_scale(y_train, seasonality)
+    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))) / scale)
+
+
+def smape(y_true, forecast: ForecastOutput, **_):
     """Symmetric Mean Absolute Percentage Error."""
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    y_pred = _point_from_forecast(forecast)
     denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
     denom = np.where(denom == 0, 1.0, denom)
     return float(np.mean(np.abs(y_true - y_pred) / denom))
+
+
+def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
+    """1 - MAE_model / MAE_naive.
+
+    ``MAE_naive`` is the seasonal-naive MAE on the training series (same
+    scale as :func:`mase`), so the score is identical to ``1 - mase``.
+    Positive = better than naive; 0 = parity; negative = worse.
+    """
+    scale = _seasonal_naive_scale(y_train, seasonality)
+    model_mae = float(np.mean(np.abs(y_true - _point_from_forecast(forecast))))
+    return float(1.0 - model_mae / scale)
+
+
+# ---------------------------------------------------------------------------
+# Forecasting — probabilistic metrics
+# ---------------------------------------------------------------------------
+
+def pinball(y_true, forecast: ForecastOutput, **_):
+    """Mean pinball (quantile) loss, averaged over all quantile levels."""
+    return float(_pinball_per_level(y_true, forecast).mean())
+
+
+def crps(y_true, forecast: ForecastOutput, **_):
+    """CRPS approximated by the quantile-score formula: 2 * mean pinball loss.
+
+    Converges to the true CRPS as the quantile grid becomes dense.
+    """
+    return 2.0 * pinball(y_true, forecast)
+
+
+def wql(y_true, forecast: ForecastOutput, **_):
+    """Weighted Quantile Loss (Salinas et al. / Chronos).
+
+    ``WQL = (1/Q) sum_q [ 2 * sum_t pinball_q(y_t) / sum_t |y_t| ]``
+    """
+    _, levels = _stacked(forecast)
+    denom = float(np.sum(np.abs(y_true)))
+    if denom == 0:
+        return float("nan")
+    # _pinball_per_level returns per-level mean; multiply back by N to get sum.
+    n_elem = float(y_true.size)
+    per_level_sum = _pinball_per_level(y_true, forecast) * n_elem
+    return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
+
+
+def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
+    """Mean Coverage Interval Score for a ``(1 - alpha)`` prediction interval.
+
+    ``IS_alpha = (U - L) + (2/alpha)(L - y) 1[y < L] + (2/alpha)(y - U) 1[y > U]``
+
+    The lower / upper bounds are taken from the quantile levels closest to
+    ``alpha/2`` and ``1 - alpha/2``. With the standard Chronos quantile
+    grid (0.1, …, 0.9), an ``alpha=0.05`` request snaps to the 0.1 / 0.9
+    bounds — effectively scoring an 80% PI on its 95% schedule.
+    """
+    quants, levels = _stacked(forecast)
+    li = int(np.argmin(np.abs(levels - alpha / 2.0)))
+    ui = int(np.argmin(np.abs(levels - (1.0 - alpha / 2.0))))
+    lower = quants[..., li]                            # (M, H, C)
+    upper = quants[..., ui]
+    under = np.maximum(0.0, lower - y_true)
+    over = np.maximum(0.0, y_true - upper)
+    score = (upper - lower) + (2.0 / alpha) * (under + over)
+    return float(np.mean(score))
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +259,160 @@ def _point_adjust(y_true, y_pred):
         y_pred_adj[seg_start:] = 1
     return y_pred_adj
 
+# VUS metrics
+# Ported from https://github.com/thedatumorg/VUS, vus/utils/metrics.py
+# (`RangeAUC_volume_opt`) and vus/analysis/robustness_eval.py
+# (`generate_curve`). Reference: Paparrizos et al., "Volume Under the
+# Surface: A New Accuracy Evaluation Measure for Time-Series Anomaly
+# Detection".
+
+
+def _segments(labels):
+    """Return list of (start, end) inclusive anomaly segments."""
+    labels = np.asarray(labels)
+    out = []
+    i = 0
+    n = len(labels)
+    while i < n:
+        if labels[i] == 0:
+            i += 1
+            continue
+        j = i
+        while j < n and labels[j] != 0:
+            j += 1
+        out.append((i, j - 1))
+        i = j
+    return out
+
+
+def _extend_labels(labels, segments, window):
+    """Soft-extend each anomaly segment by `window // 2` on each side with
+    a sqrt fade, clipped to [0, 1]."""
+    extended = labels.astype(float).copy()
+    n = len(extended)
+    if window == 0:
+        return extended
+    for s, e in segments:
+        x1 = np.arange(e + 1, min(e + window // 2 + 1, n))
+        if len(x1):
+            extended[x1] += np.sqrt(1 - (x1 - e) / window)
+        x2 = np.arange(max(s - window // 2, 0), s)
+        if len(x2):
+            extended[x2] += np.sqrt(1 - (s - x2) / window)
+    return np.minimum(extended, 1.0)
+
+
+def _merge_segments(segments, window, n):
+    """Merge segments whose `window // 2` halos overlap."""
+    if not segments:
+        return []
+    half = window // 2
+    a = max(segments[0][0] - half, 0)
+    merged = []
+    for i in range(len(segments) - 1):
+        if segments[i][1] + half < segments[i + 1][0] - half:
+            merged.append((a, segments[i][1] + half))
+            a = segments[i + 1][0] - half
+    merged.append((a, min(segments[-1][1] + half, n - 1)))
+    return merged
+
+
+def _range_auc_volume(labels, score, window_size, thre=250):
+    """Compute (VUS_ROC, VUS_PR) for one (labels, score) pair.
+
+    Vectorized port of `metricor.RangeAUC_volume_opt`. Algebraic identity
+    used: TP = dot(labels_ext, pred), N_labels = P + TP - dot(labels, pred).
+    Threshold sweep is vectorized via a cumulative sum of labels_ext in
+    descending score order. Existence count uses per-segment max-score
+    plus searchsorted.
+    """
+    labels = np.asarray(labels)
+    score = np.asarray(score, dtype=float)
+    n = len(labels)
+    P = float(labels.sum())
+    seq = _segments(labels)
+
+    # Constant across windows: threshold values and N_pred per threshold.
+    score_sorted = -np.sort(-score)
+    score_asc = score_sorted[::-1]
+    thresholds = score_sorted[np.linspace(0, n - 1, thre).astype(int)]
+    ks = n - np.searchsorted(score_asc, thresholds, side="left")
+
+    # Constant across windows: TP_strict = dot(labels, pred) per threshold,
+    # via cumulative sum of binary labels in descending score order.
+    order = np.argsort(-score, kind="stable")
+    B_cum = np.cumsum(labels[order].astype(float))
+    TP_strict = B_cum[ks - 1]
+
+    auc = np.zeros(window_size + 1)
+    ap = np.zeros(window_size + 1)
+
+    for w in range(window_size + 1):
+        labels_ext = _extend_labels(labels, seq, w)
+        L = _merge_segments(seq, w, n)
+
+        TP = np.cumsum(labels_ext[order])[ks - 1]
+        N_labels = P + TP - TP_strict
+        P_new = (P + N_labels) / 2
+        N_new = n - P_new
+
+        # P_new >= P > 0 (labels_ext >= labels) and N_new > 0 for any non-
+        # pathological input, so plain division is safe here.
+        recall = np.minimum(TP / P_new, 1.0)
+        fpr = (ks - TP) / N_new
+        precision = TP / ks
+
+        if L:
+            max_scores = np.sort(np.array([score[s:e + 1].max() for s, e in L]))
+            existence = len(L) - np.searchsorted(max_scores, thresholds, side="left")
+            existence_ratio = existence / len(L)
+        else:
+            existence_ratio = np.zeros(thre)
+
+        tpr = recall * existence_ratio
+
+        tf = np.zeros((thre + 2, 2))
+        tf[1:thre + 1, 0] = tpr
+        tf[1:thre + 1, 1] = fpr
+        tf[-1] = (1, 1)
+        prec = np.ones(thre + 1)
+        prec[1:] = precision
+
+        auc[w] = np.dot(tf[1:, 1] - tf[:-1, 1], (tf[1:, 0] + tf[:-1, 0]) / 2)
+        ap[w] = np.dot(tf[1:-1, 0] - tf[:-2, 0], prec[1:])
+
+    return float(auc.mean()), float(ap.mean())
+
+
+def _vus_per_series(y_true, y_score, slidingWindow, thre):
+    """Average a chosen VUS scalar across non-empty series."""
+    rocs, prs = [], []
+    for yt, ys in zip(y_true, y_score):
+        yt = np.asarray(yt)
+        ys = np.asarray(ys)
+        if yt.sum() == 0:
+            continue
+        roc, pr = _range_auc_volume(yt, ys, slidingWindow, thre)
+        rocs.append(roc)
+        prs.append(pr)
+    if not rocs:
+        return float("nan"), float("nan")
+    return float(np.mean(rocs)), float(np.mean(prs))
+
+
+def vus_roc(y_true, y_score, slidingWindow=100, thre=250):
+    """Volume Under the Surface (ROC).
+
+    Averaged per series. `slidingWindow` is the upper bound of the window
+    axis for the volume integration; callers benchmarking heterogeneous
+    series should pass a per-dataset value.
+    """
+    return _vus_per_series(y_true, y_score, slidingWindow, thre)[0]
+
+
+def vus_pr(y_true, y_score, slidingWindow=100, thre=250):
+    """Volume Under the Surface (PR). Averaged per series."""
+    return _vus_per_series(y_true, y_score, slidingWindow, thre)[1]
 
 # ---------------------------------------------------------------------------
 # Event detection
@@ -264,6 +506,11 @@ FORECASTING_METRICS = {
     "rmse": rmse,
     "mase": mase,
     "smape": smape,
+    "crps": crps,
+    "wql": wql,
+    "mcis": mcis,
+    "pinball": pinball,
+    "skill_score_ratio": skill_score_ratio,
 }
 
 CLASSIFICATION_METRICS = {
@@ -276,6 +523,8 @@ AD_METRICS = {
     "auc_roc": auc_roc,
     "auc_pr": auc_pr,
     "f1_pa": f1_pa,
+    "vus_roc": vus_roc,
+    "vus_pr": vus_pr,
 }
 
 EVENT_METRICS = {

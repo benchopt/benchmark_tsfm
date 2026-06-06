@@ -3,7 +3,7 @@
 Forecasting predict() returns a single :class:`ForecastOutput` covering
 every input series in the matching :class:`ForecastInput`. The output is
 shape-aware: ``quantiles[i]`` is the per-series ndarray
-``(n_cutoffs_i, Q, prediction_length, C)``, aligned with the same index
+``(n_cutoffs_i, prediction_length, C, Q)``, aligned with the same index
 order as the input ``x``.
 """
 
@@ -57,3 +57,30 @@ class ForecastOutput:
             idx = levels.index(0.5)
             return [arr[:, :, :, idx] for arr in self.quantiles]
         return [arr.mean(axis=3) for arr in self.quantiles]
+
+    def flatten(self) -> "ForecastOutput":
+        """Collapse per-series quantile arrays into a single ``(M, H, C, Q)`` array.
+
+        Returns a new :class:`ForecastOutput` whose ``quantiles`` list contains
+        exactly one element — a stacked array of shape
+        ``(total_windows, prediction_length, C, Q)`` — where ``total_windows``
+        is the sum of ``n_cutoffs_i`` across all series.  The
+        ``quantile_levels`` tuple is preserved unchanged.
+
+        This is the canonical form consumed by forecasting metrics, which
+        expect a single contiguous array rather than a ragged per-series list.
+
+        Returns
+        -------
+        ForecastOutput
+            A new (frozen) instance with ``quantiles = [stacked]``.
+        """
+        windows = []
+        for arr in self.quantiles:          # arr: (n_cutoffs_i, H, C, Q)
+            for k in range(arr.shape[0]):
+                windows.append(arr[k])      # (H, C, Q)
+        if not windows:
+            # Edge case: no predictions at all — return empty output
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
+        stacked = np.stack(windows, axis=0)  # (M, H, C, Q)
+        return ForecastOutput(quantiles=[stacked], quantile_levels=self.quantile_levels)

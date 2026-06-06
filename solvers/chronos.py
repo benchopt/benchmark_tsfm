@@ -9,6 +9,10 @@ Model loading is done in ``set_objective`` (untimed). Inference batches
 every (series, cutoff) pair into a single call — the pipeline accepts a
 list of variable-length tensors and applies left-padding internally, so
 all the per-cutoff work happens in one forward pass.
+
+References
+----------
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 from typing import Sequence
@@ -43,20 +47,19 @@ POOLERS = {
 
 
 class _ChronosForecaster(BaseTSFMAdapter):
-    """Batched Chronos v1 adapter; quantiles are derived from sample draws."""
+    """Batched Chronos-2 adapter; uses the pipeline's native quantile output."""
 
-    DEFAULT_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
-
-    def __init__(self, pipeline, prediction_length, quantile_levels=None):
+    def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
-        self.quantile_levels = quantile_levels or self.DEFAULT_QUANTILE_LEVELS
+        self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
 
     # ------------------------------------------------------------------
     # Template method — subclasses override _build_inputs / _assemble
     # ------------------------------------------------------------------
 
-    def predict(self, x: ForecastInput) -> ForecastOutput:
+    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+        horizon = prediction_length or self.prediction_length
         inputs, layout, per_series_shape = self._build_inputs(x)
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
@@ -64,14 +67,14 @@ class _ChronosForecaster(BaseTSFMAdapter):
         with torch.no_grad():
             output = self.pipeline.predict(
                 inputs,
-                prediction_length=self.prediction_length,
+                prediction_length=horizon,
             )
-        return self._assemble_output(output, layout, per_series_shape)
+        return self._assemble_output(output, layout, per_series_shape, horizon)
 
     def _build_inputs(self, x):
-        """Build list of 1-D tensors (one per channel) and track layout."""
+        """Build (C, T) tensors (all channels together); layout omits channel idx."""
         inputs = []
-        layout = []  # (series_idx, cutoff_idx, channel_idx)
+        layout = []  # (series_idx, cutoff_idx)
         per_series_shape = []  # (C, n_cutoffs)
         for series_idx, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
             series = np.asarray(series, dtype=np.float32)
@@ -81,30 +84,25 @@ class _ChronosForecaster(BaseTSFMAdapter):
             per_series_shape.append((C, len(cutoffs)))
             for cutoff_idx, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
-                for c in range(C):
-                    inputs.append(torch.from_numpy(hist[:, c]))
-                    layout.append((series_idx, cutoff_idx, c))
+                inputs.append(torch.from_numpy(hist.T))  # (C, T_cutoff)
+                layout.append((series_idx, cutoff_idx))
         return inputs, layout, per_series_shape
 
-    def _assemble_output(self, samples, layout, per_series_shape):
-        """Derive quantile fan from Monte-Carlo sample draws."""
-        # samples: (n_inputs, num_samples, H)
-        q_arr = np.quantile(
-            samples.float().cpu().numpy(),
-            q=list(self.quantile_levels),
-            axis=1,
-        ).transpose(1, 0, 2)  # (n_inputs, Q, H)
-
+    def _assemble_output(self, forecast, layout, per_series_shape, prediction_length):
+        """Use quantile tensors directly from the Chronos-2 pipeline."""
+        # forecast: list[(n_variates, Q, prediction_length)]
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, prediction_length, C, Q), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
-        for i, (series_idx, cutoff_idx, c) in enumerate(layout):
-            per_series[series_idx][cutoff_idx, :, :, c] = q_arr[i]
+        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
+            arr = pred.float().cpu().numpy()  # (C, Q, H)
+            per_series[series_idx][cutoff_idx] = arr.transpose(2, 0, 1)  # (H, C, Q)
 
-        return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
-
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=self.quantile_levels
+        )
 
 
 class _ChronosEmbedEncoder(UnpooledEncoder):
@@ -180,7 +178,13 @@ class _ChronosHookEncoder(UnpooledEncoder):
             handle.remove()
 
         # (B*V, T_tok, D) -> (B, T_tok, V, D)
-        return captured["h"].float().cpu().numpy().reshape(B, -1, V, captured["h"].shape[-1])
+        return (
+            captured["h"]
+            .float()
+            .cpu()
+            .numpy()
+            .reshape(B, -1, V, captured["h"].shape[-1])
+        )
 
 
 def ChronosEncoder(
@@ -247,6 +251,11 @@ class Solver(BaseTSFMSolver):
         "model_size": ["small"],
         "layer": [None],
         "pooler": ["mean"],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     @property
@@ -294,9 +303,10 @@ class Solver(BaseTSFMSolver):
             return adapter
 
         elif task == "anomaly_detection":
+            # AD scores forecast residuals over an adaptive horizon;
+            # prediction_length is ignored by the forecaster in AD mode.
             return ForecastResidualAdapter(
                 _ChronosForecaster(model, prediction_length=1),
-                prediction_length=1,
             )
 
         else:

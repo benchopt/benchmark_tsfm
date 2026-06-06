@@ -10,26 +10,37 @@ every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
 call — the pipeline accepts a list of variable-length tensors and
 applies left-padding internally, so all the per-cutoff work happens in
 one forward pass.
+
+References
+----------
+    https://github.com/amazon-science/chronos-forecasting
 """
 
 import numpy as np
 import torch
 from benchopt import BaseSolver
-from chronos import Chronos2Pipeline
+from chronos.chronos2 import Chronos2Pipeline
 
 from benchmark_utils.adapters import (
     Encoder,
+    LastPooler,
     LinearProbeAdapter,
+    MaxPooler,
+    MeanPooler,
     UnpooledEncoder,
 )
+from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
-from .chronos import (
-    _ChronosForecaster,
-    POOLERS,
-    SUPPORTED_TASKS,
-)
 
+SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
+
+POOLERS = {
+    "mean": MeanPooler,
+    "max": MaxPooler,
+    "last": LastPooler,
+}
 
 # ---------------------------------------------------------------------------
 # Chronos-2 encoders — embed() has a different signature than Chronos v1:
@@ -45,13 +56,26 @@ def _to_context(x):
     return x.transpose(0, 2, 1)
 
 
-class _Chronos2Forecaster(_ChronosForecaster):
-    """Chronos-2 variant — uses native quantile output from the pipeline."""
+class _Chronos2Forecaster(BaseTSFMAdapter):
+    """Chronos-2 forecaster — uses native quantile output from the pipeline."""
 
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
         self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
+
+    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+        horizon = prediction_length or self.prediction_length
+        inputs, layout, per_series_shape = self._build_inputs(x)
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
+
+        with torch.no_grad():
+            output = self.pipeline.predict(
+                inputs,
+                prediction_length=horizon,
+            )
+        return self._assemble_output(output, layout, per_series_shape, horizon)
 
     def _build_inputs(self, x):
         """Build (C, T) tensors (all channels together); layout omits channel idx."""
@@ -70,18 +94,20 @@ class _Chronos2Forecaster(_ChronosForecaster):
                 layout.append((series_idx, cutoff_idx))
         return inputs, layout, per_series_shape
 
-    def _assemble_output(self, forecast, layout, per_series_shape):
+    def _assemble_output(self, forecast, layout, per_series_shape, prediction_length):
         """Use quantile tensors directly from Chronos-2 pipeline."""
         # forecast: list[(n_variates, Q, prediction_length)]
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, self.prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, prediction_length, C, Q), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
         for (series_idx, cutoff_idx), pred in zip(layout, forecast):
             arr = pred.float().cpu().numpy()  # (C, Q, H)
-            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
-        return ForecastOutput(quantiles=per_series, quantile_levels=self.quantile_levels)
+            per_series[series_idx][cutoff_idx] = arr.transpose(2, 0, 1)  # (H, C, Q)
+        return ForecastOutput(
+            quantiles=per_series, quantile_levels=self.quantile_levels
+        )
 
 
 class _Chronos2EmbedEncoder(UnpooledEncoder):
@@ -170,6 +196,11 @@ class Solver(BaseSolver):
         "model_size": ["small"],
         "layer": [None],
         "pooler": ["mean"],
+        "classifier": ["log_reg"],
+        "penalty": ["l2"],
+        "C": [1.0],
+        "alpha": [1.0],
+        "n_iterators": [100],
     }
 
     def skip(self, task, **kwargs):
@@ -213,7 +244,6 @@ class Solver(BaseSolver):
         elif self.task == "anomaly_detection":
             self._adapter = ForecastResidualAdapter(
                 _Chronos2Forecaster(self._pipeline, prediction_length=1),
-                prediction_length=1,
             )
 
     def get_result(self):

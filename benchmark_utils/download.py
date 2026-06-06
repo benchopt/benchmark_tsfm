@@ -1,5 +1,7 @@
 """Shared download helper for the TSB-UAD public dataset bundle.
 """
+import numpy as np
+import pandas as pd
 from pathlib import Path
 import pooch
 
@@ -34,6 +36,17 @@ _SUBDIR = {
 }
 
 
+_BASE_NAMES = {
+    "YAHOO": 'Yahoo_', 
+    "ECG" : 'MBA_ECG',
+    "SVDB": '8',
+}
+
+_FILES_EXT = {
+    "YAHOO": '.out',
+    "ECG": '.out',
+    "SVDB": '.out'
+}
 def fetch_mitdb() -> Path:
     """Return the local directory holding MIT-BIH Arrhythmia Database files.
 
@@ -93,3 +106,45 @@ def fetch_tsb_uad(name: str) -> Path:
             f"Expected {subdir} after extracting the TSB-UAD bundle."
         )
     return subdir
+
+
+def load_data_tsb_uad(path, records_ids, train_ratio, number):
+    """
+    Load series from a dataset given the path, the record ids
+    to get and a training ratio. 
+    """
+    # files names
+    path = Path(path)
+    base_name = _BASE_NAMES.get(path.name)
+    extension = _FILES_EXT.get(path.name)
+
+    # get ids of records
+    if records_ids in (None, "all", ["all"]):
+        records_ids = [
+            f.stem for f in path.glob('*'+extension)
+            if f.stem.startswith(base_name)
+        ]
+
+    if number in (None, -1):
+        number = len(records_ids)
+
+    X_train, X_test, y_test = [], [], []
+    for i, id in enumerate(records_ids):
+
+        if i >= number:
+            break
+
+        file_path = path / f"{id}{extension}"
+        data = pd.read_csv(file_path, header=None).dropna().to_numpy()
+        if data.shape[1] < 2:
+            continue
+
+        # compute split
+        split = max(1, int(data.shape[0] * train_ratio))
+
+        # split in train/test
+        X_train.append(data[:split, 0].astype(np.float32))
+        X_test.append(data[split:, 0].astype(np.float32))
+        y_test.append(data[split:, 1].astype(np.int32))
+
+    return X_train, X_test, y_test       
