@@ -43,7 +43,7 @@ def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
     """Extract (M, H, C) point forecast — median when available, else mean."""
     quants, levels = _stacked(forecast)
     if 0.5 in levels:
-        return quants[..., int(np.where(levels == 0.5)[0][0])]
+        return quants[..., np.where(levels == 0.5)[0].item()]
     return quants.mean(axis=-1)
 
 

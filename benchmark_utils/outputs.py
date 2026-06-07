@@ -55,8 +55,8 @@ class ForecastOutput:
         levels = list(self.quantile_levels)
         if 0.5 in levels:
             idx = levels.index(0.5)
-            return [arr[:, :, :, idx] for arr in self.quantiles]
-        return [arr.mean(axis=3) for arr in self.quantiles]
+            return [arr[..., idx] for arr in self.quantiles]
+        return [arr.mean(axis=-1) for arr in self.quantiles]
 
     def flatten(self) -> "ForecastOutput":
         """Collapse per-series quantile arrays into a single ``(M, H, C, Q)`` array.
