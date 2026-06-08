@@ -281,6 +281,10 @@ class Solver(BaseSolver):
         "n_estimators": [100],
     }
 
+    test_config = {
+        "checkpoint": "Datadog/Toto-2.0-4m",
+    }
+
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"Toto-2.0 solver does not support task={task!r}"
@@ -332,7 +336,9 @@ class Solver(BaseSolver):
             self._adapter = adapter
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
+            self._adapter = ForecastResidualAdapter(
+                forecaster
+            )
 
     def get_result(self):
         return {"model": self._adapter}

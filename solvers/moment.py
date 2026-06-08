@@ -180,6 +180,10 @@ class Solver(BaseSolver):
         "n_estimators": [100],
     }
 
+    test_config = {
+        "checkpoint": "AutonLab/MOMENT-1-small",
+    }
+
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"Moment solver does not support task={task!r}"
@@ -242,8 +246,10 @@ class Solver(BaseSolver):
                 task="classification",
                 n_classes=self.meta.get("n_classes"),
                 classifier=self.classifier,
-                max_iter=self.max_iter,
                 n_estimators=self.n_estimators,
+                C=self.C,
+                alpha=self.alpha,
+                penalty=self.penalty,
             )
             self._adapter.fit(self.X_train, self.y_train)
         else:
