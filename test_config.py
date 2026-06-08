@@ -12,7 +12,7 @@ import pytest
 
 def check_test_dataset_get_data(benchmark, dataset_class):
     if dataset_class.name.lower() == "mitdb":
-        pytest.skip("Download timeout due to rate limits")
+        pytest.xfail("Download timeout due to rate limits")
 
 def check_test_solver_run(benchmark, solver_class, test_dataset_name):
     if solver_class.name.lower() == "tfc-api" and os.environ.get("TFC_API_KEY") is None:
