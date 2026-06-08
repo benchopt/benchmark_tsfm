@@ -14,7 +14,7 @@ jobs:
     uses: tommoral/template_benchmark/.github/workflows/test_benchmarks.yml@CI_allow_caching
     with:
       benchopt_branch: benchopt@main
-      cache_directories: ./data
+      cache_dir: ./data
   benchopt_release:
     uses: benchopt/template_benchmark/.github/workflows/test_benchmarks.yml@main
     with:
