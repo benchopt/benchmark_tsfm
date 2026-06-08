@@ -35,7 +35,6 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
-
 SUPPORTED_TASKS = {"forecasting"}
 
 # Map benchmark freq codes to API-accepted pandas-like aliases.
@@ -134,11 +133,13 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             index = pd.date_range("2000-01-01", periods=T, freq=pd_freq)
 
             frames = [
-                pd.DataFrame({
-                    "unique_id": f"s{series_idx}_c{c}",
-                    "ds": index,
-                    "target": series[:, c],
-                })
+                pd.DataFrame(
+                    {
+                        "unique_id": f"s{series_idx}_c{c}",
+                        "ds": index,
+                        "target": series[:, c],
+                    }
+                )
                 for c in range(C)
             ]
             train_df = pd.concat(frames, ignore_index=True)
@@ -183,11 +184,13 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             index = pd.date_range(end=end, periods=T, freq=pd_freq)
             for c in range(C):
                 frames.append(
-                    pd.DataFrame({
-                        "unique_id": f"s{series_idx}_c{c}",
-                        "ds": index,
-                        "target": series[:, c],
-                    })
+                    pd.DataFrame(
+                        {
+                            "unique_id": f"s{series_idx}_c{c}",
+                            "ds": index,
+                            "target": series[:, c],
+                        }
+                    )
                 )
             per_series_meta.append((series_idx, C, index, cutoffs))
 
@@ -236,19 +239,22 @@ class _TFCAPIForecaster(BaseTSFMAdapter):
             mean_col = str(self.model)
             if mean_col not in forecast_df.columns:
                 raise ValueError(
-                    f"TFC API response missing expected columns; got {list(forecast_df.columns)!r}"
+                    "TFC API response missing expected columns;"
+                    f" got {list(forecast_df.columns)!r}"
                 )
             levels = [0.5]
             quantile_cols = [mean_col]
 
         Q = len(levels)
-        preds = np.empty(
-            (len(cutoffs), Q, self.prediction_length, C), dtype=np.float32
-        )
+        preds = np.empty((len(cutoffs), Q, self.prediction_length, C), dtype=np.float32)
         for c in range(C):
             channel = forecast_df.loc[forecast_df["unique_id"] == f"s{series_idx}_c{c}"]
             for k, fcd in enumerate(fcds):
-                window = channel.loc[channel["fcd"] == fcd].sort_values("ds").head(self.prediction_length)
+                window = (
+                    channel.loc[channel["fcd"] == fcd]
+                    .sort_values("ds")
+                    .head(self.prediction_length)
+                )
                 for q_idx, col in enumerate(quantile_cols):
                     preds[k, q_idx, :, c] = window[col].to_numpy(dtype=np.float32)
         return preds, tuple(levels)

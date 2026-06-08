@@ -10,7 +10,9 @@ References:
 """
 
 import numpy as np
+import torch
 from benchopt import BaseSolver
+from toto2 import Toto2Model
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -276,7 +278,11 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
+    }
+
+    test_config = {
+        "checkpoint": "Datadog/Toto-2.0-4m",
     }
 
     def skip(self, task, **kwargs):
@@ -285,9 +291,6 @@ class Solver(BaseSolver):
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
-        import torch
-        from toto2 import Toto2Model
-
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
@@ -333,7 +336,9 @@ class Solver(BaseSolver):
             self._adapter = adapter
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
+            self._adapter = ForecastResidualAdapter(
+                forecaster
+            )
 
     def get_result(self):
         return {"model": self._adapter}
