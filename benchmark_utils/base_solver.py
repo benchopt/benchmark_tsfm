@@ -51,7 +51,8 @@ class BaseTSFMSolver(BaseSolver):
         "cuda" or "cpu", automatically selected in set_objective.
 
     dtype
-        The data type of both data and model (default: bfloat16 on CUDA, float32 elsewhere).
+        The data type of both data and model.
+        Default to bfloat16 on CUDA, float32 elsewhere.
     """
 
     supported_tasks: set[TaskType]
@@ -187,7 +188,9 @@ class BaseTSFMSolver(BaseSolver):
         """Return the fitted adapter."""
         return {"model": self._adapter}
 
-    def forecast_batch(self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]) -> list[torch.Tensor]:
+    def forecast_batch(
+        self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]
+    ) -> list[torch.Tensor]:
         """Forecast on a batch of prepared inputs.
 
         Subclasses must implement this to call their model's inference.
@@ -267,6 +270,4 @@ class BaseTSFMSolver(BaseSolver):
 
         per_series = [np.stack(preds) for preds in per_series_preds]
 
-        return ForecastOutput(
-            quantiles=per_series, quantile_levels=quantile_levels
-        )
+        return ForecastOutput(quantiles=per_series, quantile_levels=quantile_levels)

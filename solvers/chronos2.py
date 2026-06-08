@@ -22,25 +22,17 @@ from benchopt import BaseSolver
 from chronos.chronos2 import Chronos2Pipeline
 
 from benchmark_utils.adapters import (
+    POOLERS,
+    BaseTSFMAdapter,
     Encoder,
-    LastPooler,
     LinearProbeAdapter,
-    MaxPooler,
-    MeanPooler,
     UnpooledEncoder,
 )
-from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
 SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
-
-POOLERS = {
-    "mean": MeanPooler,
-    "max": MaxPooler,
-    "last": LastPooler,
-}
 
 # ---------------------------------------------------------------------------
 # Chronos-2 encoders — embed() has a different signature than Chronos v1:
@@ -200,7 +192,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):

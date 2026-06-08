@@ -55,23 +55,39 @@ from benchmark_utils.metrics import ALL_METRICS
 class Objective(BaseObjective):
     name = "TSFM Benchmark"
     url = "https://github.com/benchopt/benchmark_tsfm"
-    min_benchopt_version = "1.9"
+    min_benchopt_version = "1.9.2"
 
     # Shared requirements across ALL solvers — solvers declare model-specific
     # extras in their own ``requirements`` list.
     requirements = ["scikit-learn", "aeon"]
 
     # Minimal config for ``benchopt test``
-    test_dataset_name = "monash"
-    test_config = {"dataset": {"debug": True}}
+    test_config = {
+        "dataset": {
+            # Skipping MITDB for now due to timeout in download
+            "name": [
+                "monash", "ucr", "yahoo",  # "mitdb",
+            ],
+            "debug": True,
+        }
+    }
 
     # ------------------------------------------------------------------
     # Data ingestion
     # ------------------------------------------------------------------
 
-    def set_data(self, X_train, y_train, X_test, y_test,
-                 task, metrics, cutoff_indexes=None, covariates=None,
-                 **meta):
+    def set_data(
+        self,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        task,
+        metrics,
+        cutoff_indexes=None,
+        covariates=None,
+        **meta,
+    ):
         from benchmark_utils.covariates import Covariates
 
         self.X_train = X_train
@@ -140,9 +156,7 @@ class Objective(BaseObjective):
 
         # Concatenate per-series targets into a single (M, H, C) array, in the
         # same order the flattened forecast iterates (series-major, cutoff-minor).
-        y_true = np.concatenate(
-            [np.asarray(yt) for yt in self.y_test], axis=0
-        )
+        y_true = np.concatenate([np.asarray(yt) for yt in self.y_test], axis=0)
 
         kwargs = dict(
             y_train=self.X_train,
@@ -150,8 +164,7 @@ class Objective(BaseObjective):
             alpha=self.meta.get("mcis_alpha", 0.05),
         )
         result = {
-            name: ALL_METRICS[name](y_true, forecast, **kwargs)
-            for name in self.metrics
+            name: ALL_METRICS[name](y_true, forecast, **kwargs) for name in self.metrics
         }
         result["leakage"] = 0.0
         # benchopt's stopping criterion monitors a single 'value' key; expose
@@ -203,13 +216,13 @@ class Objective(BaseObjective):
         from benchmark_utils.outputs import ForecastOutput
 
         class _ConstantAdapter(BaseTSFMAdapter):
-            def __init__(self, task, prediction_length):
+            def __init__(self, task, meta):
                 self._task = task
-                self._prediction_length = prediction_length
+                self._meta = meta
 
             def predict(self, x):
                 if self._task == "forecasting":
-                    H = self._prediction_length
+                    H = self._meta.get("prediction_length", 1)
                     qs = []
                     for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
@@ -222,6 +235,4 @@ class Objective(BaseObjective):
                 elif self._task == "event_detection":
                     return np.zeros((0, 2 + self._meta.get("n_classes", 1)))
 
-        return {"model": _ConstantAdapter(
-            self.task, self.meta.get("prediction_length", 1)
-        )}
+        return {"model": _ConstantAdapter(self.task, self.meta)}

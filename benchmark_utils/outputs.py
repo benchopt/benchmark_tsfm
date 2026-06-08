@@ -48,7 +48,9 @@ class ForecastOutput:
 
     @property
     def point(self) -> Sequence[np.ndarray]:
-        """Best point estimate per series — median when available, else mean across quantiles.
+        """Best point estimate per series.
+
+        By default, use the median when available, else mean across quantiles.
 
         Each entry has shape ``(n_cutoffs_i, prediction_length, C)``.
         """
@@ -76,9 +78,9 @@ class ForecastOutput:
             A new (frozen) instance with ``quantiles = [stacked]``.
         """
         windows = []
-        for arr in self.quantiles:          # arr: (n_cutoffs_i, H, C, Q)
+        for arr in self.quantiles:  # arr: (n_cutoffs_i, H, C, Q)
             for k in range(arr.shape[0]):
-                windows.append(arr[k])      # (H, C, Q)
+                windows.append(arr[k])  # (H, C, Q)
         if not windows:
             # Edge case: no predictions at all — return empty output
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
