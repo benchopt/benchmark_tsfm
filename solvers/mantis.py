@@ -46,10 +46,6 @@ class Solver(BaseSolver):
         "n_estimators": [100],
     }
 
-    # Mantis only supports classification, so its tests run on UCR rather
-    # than the benchmark's default forecasting test dataset (monash).
-    test_config = {"dataset": {"name": "ucr", "debug": True}}
-
     def _extract_embeddings(self, X):
         """Extract embeddings for a batch of time series.
 

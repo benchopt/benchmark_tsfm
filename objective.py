@@ -70,7 +70,8 @@ class Objective(BaseObjective):
             "name": [
                 "monash", "ucr", "yahoo",  # "mitdb",
             ],
-            "debug": True}
+            "debug": True,
+        }
     }
 
     # ------------------------------------------------------------------

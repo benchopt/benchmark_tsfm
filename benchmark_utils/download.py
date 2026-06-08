@@ -1,4 +1,8 @@
-"""Shared download helper for the TSB-UAD public dataset bundle."""
+"""Shared download helpers:
+- for the TSB-UAD public dataset bundle.
+- for MITDB
+
+"""
 
 from pathlib import Path
 
