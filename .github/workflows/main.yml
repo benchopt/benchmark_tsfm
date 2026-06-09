@@ -23,7 +23,7 @@ jobs:
     uses: benchopt/template_benchmark/.github/workflows/lint_benchmarks.yml@main
     with:
       linter: ruff
-  leakage_tests:
+  test_suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -32,7 +32,7 @@ jobs:
           python-version: "3.13"
       - name: Install test dependencies
         run: pip install numpy scikit-learn pytest benchopt
-      - name: Run leakage probe tests
+      - name: Run all pytest tests
         # ``python -m pytest`` (not the bare ``pytest`` script) puts the repo
         # root on sys.path, so ``import benchmark_utils`` resolves to the real
         # package rather than the ``tests/benchmark_utils`` test directory.
