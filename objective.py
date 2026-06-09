@@ -119,16 +119,17 @@ class Objective(BaseObjective):
     # ------------------------------------------------------------------
 
     def evaluate_result(self, model):
-        if self.task == "forecasting":
-            return self._eval_forecasting(model)
-        elif self.task == "classification":
-            return self._eval_classification(model)
-        elif self.task == "anomaly_detection":
-            return self._eval_anomaly_detection(model)
-        elif self.task == "event_detection":
-            return self._eval_event_detection(model)
-        else:
-            raise ValueError(f"Unknown task: {self.task!r}")
+        match self.task:
+            case "forecasting":
+                return self._eval_forecasting(model)
+            case "classification":
+                return self._eval_classification(model)
+            case "anomaly_detection":
+                return self._eval_anomaly_detection(model)
+            case "event_detection":
+                return self._eval_event_detection(model)
+            case _:
+                raise ValueError(f"Unknown task: {self.task!r}")
 
     # --- forecasting ---------------------------------------------------
 
