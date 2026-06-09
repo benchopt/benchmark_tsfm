@@ -541,9 +541,31 @@ EVENT_METRICS = {
     "map_iou": map_iou,
 }
 
-ALL_METRICS = {
-    **FORECASTING_METRICS,
-    **CLASSIFICATION_METRICS,
-    **AD_METRICS,
-    **EVENT_METRICS,
-}
+ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS}
+
+
+
+# ---------------------------------------------------------------------------
+# Direction: which metrics are better when larger
+# ---------------------------------------------------------------------------
+# Direction is an intrinsic property of a metric, so it is declared here next
+# to the definitions — this is the single source of truth. The objective
+# re-exports it and every plot imports ``is_higher_better`` from here; nothing
+# redeclares this knowledge. Forecasting losses (mae/mse/rmse/mase/smape) and
+# FEV error metrics (wql/sql/wape/...) are all lower-is-better and so are
+# simply absent from the set below.
+HIGHER_IS_BETTER = frozenset({
+    "accuracy", "balanced_accuracy", "f1_weighted",   # classification
+    "auc_roc", "auc_pr", "f1_pa",                      # anomaly detection
+})
+
+
+def is_higher_better(metric: str) -> bool:
+    """Whether a larger value of ``metric`` means a better model.
+
+    Accepts either a bare metric name (``"auc_pr"``) or a benchopt results
+    column (``"objective_auc_pr"``). Unknown metrics default to
+    lower-is-better, the convention for forecasting/error losses.
+    """
+    name = metric[len("objective_"):] if metric.startswith("objective_") else metric
+    return name in HIGHER_IS_BETTER
