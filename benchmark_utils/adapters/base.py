@@ -38,7 +38,6 @@ import numpy as np
 
 from benchmark_utils.inputs import ForecastInput
 
-
 PredictInput = Union[ForecastInput, np.ndarray]
 
 

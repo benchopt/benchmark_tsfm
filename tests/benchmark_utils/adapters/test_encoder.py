@@ -19,9 +19,9 @@ class _DummyEncoder(UnpooledEncoder):
         self.T_tok, self.C, self.D = T_tok, C, D
 
     def encode(self, x):
-        return np.arange(
-            self.T_tok * self.C * self.D, dtype=np.float32
-        ).reshape(self.T_tok, self.C, self.D)
+        return np.arange(self.T_tok * self.C * self.D, dtype=np.float32).reshape(
+            self.T_tok, self.C, self.D
+        )
 
 
 @pytest.fixture

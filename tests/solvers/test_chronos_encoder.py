@@ -1,9 +1,8 @@
 """Shape tests for the Chronos encoder variants."""
 
+import chronos
 import numpy as np
 import pytest
-
-import chronos
 import torch
 
 from solvers.chronos import ChronosEncoder  # noqa: E402

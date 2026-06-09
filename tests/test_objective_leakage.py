@@ -24,9 +24,9 @@ class _Clean(BaseTSFMAdapter):
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1]
-            arr = np.stack(
-                [np.broadcast_to(series[:c][-1], (H, C)) for c in cutoffs]
-            )[:, None, :, :]
+            arr = np.stack([np.broadcast_to(series[:c][-1], (H, C)) for c in cutoffs])[
+                :, None, :, :
+            ]
             qs.append(arr.astype(np.float64))
         return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
 
@@ -37,9 +37,9 @@ class _Leaky(BaseTSFMAdapter):
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1]
-            arr = np.stack(
-                [series[c:c + H].reshape(H, C) for c in cutoffs]
-            )[:, None, :, :]
+            arr = np.stack([series[c : c + H].reshape(H, C) for c in cutoffs])[
+                :, None, :, :
+            ]
             qs.append(arr.astype(np.float64))
         return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
 
@@ -50,7 +50,7 @@ def objective():
     X = [rng.standard_normal((40, 1)), rng.standard_normal((35, 1))]
     cutoffs = [[30], [25]]
     y_test = [
-        np.stack([X[i][c:c + H] for c in cutoffs[i]])  # (n_cutoffs, H, C)
+        np.stack([X[i][c : c + H] for c in cutoffs[i]])  # (n_cutoffs, H, C)
         for i in range(len(X))
     ]
     obj = Objective()

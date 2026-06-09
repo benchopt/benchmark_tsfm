@@ -22,6 +22,8 @@ from benchopt import BaseSolver
 from chronos import Chronos2Pipeline
 
 from benchmark_utils.adapters import (
+    POOLERS,
+    BaseTSFMAdapter,
     Encoder,
     LinearProbeAdapter,
     UnpooledEncoder,
@@ -29,11 +31,7 @@ from benchmark_utils.adapters import (
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
 from benchmark_utils.outputs import ForecastOutput
 
-from .chronos import (
-    POOLERS,
-    SUPPORTED_TASKS,
-    _ChronosForecaster,
-)
+SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
 
 # ---------------------------------------------------------------------------
 # Chronos-2 encoders — embed() has a different signature than Chronos v1:
@@ -49,13 +47,26 @@ def _to_context(x):
     return x.transpose(0, 2, 1)
 
 
-class _Chronos2Forecaster(_ChronosForecaster):
+class _Chronos2Forecaster(BaseTSFMAdapter):
     """Chronos-2 variant — uses native quantile output from the pipeline."""
 
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
         self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
+
+    def predict(self, x, prediction_length=None):
+        horizon = prediction_length or self.prediction_length
+        inputs, layout, per_series_shape = self._build_inputs(x)
+        if not inputs:
+            return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
+
+        with torch.no_grad():
+            output = self.pipeline.predict(
+                inputs,
+                prediction_length=horizon,
+            )
+        return self._assemble_output(output, layout, per_series_shape, horizon)
 
     def _build_inputs(self, x):
         """Build (C, T) tensors (all channels together); layout omits channel idx."""
@@ -182,7 +193,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):
