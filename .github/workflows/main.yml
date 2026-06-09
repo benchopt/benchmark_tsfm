@@ -36,4 +36,4 @@ jobs:
         # ``python -m pytest`` (not the bare ``pytest`` script) puts the repo
         # root on sys.path, so ``import benchmark_utils`` resolves to the real
         # package rather than the ``tests/benchmark_utils`` test directory.
-        run: python -m pytest tests/test_leakage.py tests/test_objective_leakage.py -v
+        run: python -m pytest -v
