@@ -30,17 +30,15 @@ import sys
 
 import numpy as np
 import pandas as pd
+from benchopt import BasePlot
 from scipy.optimize import minimize
 from scipy.special import expit, log_expit
-
-from benchopt import BasePlot
 
 # Make the repo root importable so ``benchmark_utils`` resolves whether elo.py
 # is loaded by benchopt (root already on sys.path) or imported by a sibling
 # plot run standalone (only plots/ on sys.path).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from benchmark_utils.metrics import is_higher_better  # noqa: E402
-
 
 # Chess / Chatbot Arena / TabArena convention: 400-Elo gap = 91% win rate
 ELO_SCALE = 400.0 / math.log(10)
@@ -87,7 +85,7 @@ def _pairwise_wins(mat: np.ndarray) -> np.ndarray:
     W : (k, k) float array. W[i, j] = # datasets where solver i beats j,
         with ties counted as 0.5 for each side. Diagonal is zero.
     """
-    diff = mat[:, None, :] - mat[None, :, :]   # (k, k, N): mat[i] - mat[j]
+    diff = mat[:, None, :] - mat[None, :, :]  # (k, k, N): mat[i] - mat[j]
     wins = (diff < 0).sum(axis=-1).astype(np.float64)
     ties = (diff == 0).sum(axis=-1).astype(np.float64) * 0.5
     W = wins + ties
@@ -133,14 +131,16 @@ def _fit_bt(W: np.ndarray, prior_games: float = 1.0) -> np.ndarray:
         return -g
 
     r0 = np.zeros(k)
-    res = minimize(nll, r0, jac=grad, method="L-BFGS-B",
-                   options={"maxiter": 500, "ftol": 1e-9})
+    res = minimize(
+        nll, r0, jac=grad, method="L-BFGS-B", options={"maxiter": 500, "ftol": 1e-9}
+    )
     r = res.x - res.x.mean()
     return r
 
 
-def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
-               seed: int = 0) -> tuple[pd.DataFrame, str | None]:
+def _elo_table(
+    mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP, seed: int = 0
+) -> tuple[pd.DataFrame, str | None]:
     """Compute per-solver Elo + 95% bootstrap CI.
 
     Returns ``(table, anchor_name)`` where ``table`` is a DataFrame sorted by
@@ -178,13 +178,19 @@ def _elo_table(mat: pd.DataFrame, n_boot: int = N_BOOTSTRAP,
     # Games per solver: each solver plays (k-1) opponents on each of n datasets
     games = np.full(k, (k - 1) * n, dtype=np.int64)
 
-    out = pd.DataFrame({
-        "solver": [_short(s) for s in solvers],
-        "elo": elo_full,
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "games": games,
-    }).sort_values("elo", ascending=False).reset_index(drop=True)
+    out = (
+        pd.DataFrame(
+            {
+                "solver": [_short(s) for s in solvers],
+                "elo": elo_full,
+                "ci_low": ci_low,
+                "ci_high": ci_high,
+                "games": games,
+            }
+        )
+        .sort_values("elo", ascending=False)
+        .reset_index(drop=True)
+    )
     return out, anchor_name
 
 
@@ -248,17 +254,19 @@ class Plot(BasePlot):
         table, _ = _elo_table(pivot)
         bars = []
         for row in table.itertuples(index=False):
-            bars.append({
-                # y = [ci_low, elo, ci_high] → bar height = median = elo,
-                # benchopt renders the individual values as horizontal
-                # line-ew-open markers (the "candle" low/elo/high ticks).
-                # `text` must be empty for those markers to render — see
-                # benchopt/plotting/html/static/result.js:185-204.
-                "y": [row.ci_low, row.elo, row.ci_high],
-                "label": row.solver,
-                "text": "",
-                **self.get_style(row.solver),
-            })
+            bars.append(
+                {
+                    # y = [ci_low, elo, ci_high] → bar height = median = elo,
+                    # benchopt renders the individual values as horizontal
+                    # line-ew-open markers (the "candle" low/elo/high ticks).
+                    # `text` must be empty for those markers to render — see
+                    # benchopt/plotting/html/static/result.js:185-204.
+                    "y": [row.ci_low, row.elo, row.ci_high],
+                    "label": row.solver,
+                    "text": "",
+                    **self.get_style(row.solver),
+                }
+            )
         return bars
 
     def get_metadata(self, df, objective_column):
@@ -266,8 +274,10 @@ class Plot(BasePlot):
         # so the title accurately reflects which solver sits at 1000.
         anchor_name = None
         pivot = df.pivot_table(
-            index="solver_name", columns="dataset_name",
-            values=objective_column, aggfunc="mean",
+            index="solver_name",
+            columns="dataset_name",
+            values=objective_column,
+            aggfunc="mean",
         )
         pivot = pivot.loc[:, pivot.notna().all(axis=0)]
         if pivot.shape[0] >= 2:
@@ -277,7 +287,9 @@ class Plot(BasePlot):
             anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"
         else:
             anchor_desc = f"mean Elo = {ELO_ANCHOR:.0f}"
-        direction = "higher better" if is_higher_better(objective_column) else "lower better"
+        direction = (
+            "higher better" if is_higher_better(objective_column) else "lower better"
+        )
         return {
             "title": (
                 f"Elo leaderboard — {objective_column} "

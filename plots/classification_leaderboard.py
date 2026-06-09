@@ -9,16 +9,13 @@ across datasets. Sorted by Elo descending.
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from elo import _short, _elo_table, is_higher_better  # noqa: E402
-
 import pandas as pd
-
 from benchopt import BasePlot
-
+from elo import _elo_table, _short, is_higher_better  # noqa: E402
 
 _ELO_COL = "objective_balanced_accuracy"
 
@@ -26,16 +23,16 @@ _ELO_COL = "objective_balanced_accuracy"
 # hardcoded here.
 _METRICS: list[tuple[str, str]] = [
     ("objective_balanced_accuracy", "Bal. Acc"),
-    ("objective_accuracy",          "Accuracy"),
-    ("objective_f1_weighted",       "F1 weighted"),
+    ("objective_accuracy", "Accuracy"),
+    ("objective_f1_weighted", "F1 weighted"),
 ]
 
-_LOW_COLOUR  = "#ca8a04"
+_LOW_COLOUR = "#ca8a04"
 _HIGH_COLOUR = "#16a34a"
 
 
 def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
-    low_d  = ci_low  - elo
+    low_d = ci_low - elo
     high_d = ci_high - elo
     return (
         f'<div style="line-height:1.25">'
@@ -43,7 +40,7 @@ def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
         f'<div style="font-size:0.85em">'
         f'<span style="color:{_LOW_COLOUR}">{low_d:+.0f}</span>&nbsp;'
         f'<span style="color:{_HIGH_COLOUR}">{high_d:+.0f}</span>'
-        f'</div></div>'
+        f"</div></div>"
     )
 
 
@@ -51,8 +48,9 @@ def _build_elo(df: pd.DataFrame, col: str) -> pd.DataFrame | None:
     if col not in df.columns:
         return None
     rows = df[["solver_name", "dataset_name", col]].dropna(subset=[col])
-    pivot = rows.pivot_table(index="solver_name", columns="dataset_name",
-                             values=col, aggfunc="mean")
+    pivot = rows.pivot_table(
+        index="solver_name", columns="dataset_name", values=col, aggfunc="mean"
+    )
     pivot = pivot.loc[:, pivot.notna().all(axis=0)]
     if pivot.shape[1] > 0:
         pivot = pivot.loc[:, pivot.var(axis=0, skipna=False) > 0]
@@ -96,14 +94,17 @@ class Plot(BasePlot):
             all_solvers.update(m.keys())
 
         elo_lookup = (
-            {row.solver: (row.elo, row.ci_low, row.ci_high)
-             for row in elo_res.itertuples(index=False)}
-            if elo_res is not None else {}
+            {
+                row.solver: (row.elo, row.ci_low, row.ci_high)
+                for row in elo_res.itertuples(index=False)
+            }
+            if elo_res is not None
+            else {}
         )
 
         def sort_key(s: str):
             if s in elo_lookup:
-                return -elo_lookup[s][0]   # negate → descending
+                return -elo_lookup[s][0]  # negate → descending
             return metric_maps.get(_ELO_COL, {}).get(s, -float("inf"))
 
         sorted_solvers = sorted(all_solvers, key=sort_key)
@@ -117,18 +118,18 @@ class Plot(BasePlot):
                 val = metric_maps[col].get(solver)
                 cells.append(
                     f'<span style="font-weight:500">{val:.4f}</span>'
-                    if val is not None else "—"
+                    if val is not None
+                    else "—"
                 )
             rows.append([str(rank), solver, elo_cell] + cells)
 
         return rows
 
     def get_metadata(self, df):
-        columns = (
-            ["Rank", "Solver", "Elo ↑"]
-            + [f"{label} {'↑' if is_higher_better(col) else '↓'}"
-               for col, label in _METRICS]
-        )
+        columns = ["Rank", "Solver", "Elo ↑"] + [
+            f"{label} {'↑' if is_higher_better(col) else '↓'}"
+            for col, label in _METRICS
+        ]
         return {
             "title": "Classification leaderboard — Elo (BT-MLE on Bal. Acc) + mean metrics across datasets",
             "columns": columns,

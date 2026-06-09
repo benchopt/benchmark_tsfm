@@ -10,39 +10,40 @@ All Elos use Bradley-Terry MLE + 200-round bootstrap 95% CI.
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # elo.py lives in the same plots/ directory; add it to sys.path so we can
 # import its shared helpers without duplicating code.
 sys.path.insert(0, os.path.dirname(__file__))
-from elo import (  # noqa: E402
-    _elo_table, _short, ANCHOR_PREFERENCES,
-    ELO_ANCHOR, N_BOOTSTRAP, is_higher_better,
-)
-
 import numpy as np
 import pandas as pd
-
 from benchopt import BasePlot
-
+from elo import (  # noqa: E402
+    ANCHOR_PREFERENCES,
+    ELO_ANCHOR,
+    N_BOOTSTRAP,
+    _elo_table,
+    _short,
+    is_higher_better,
+)
 
 # Task → results column used for that task's Elo and metric cell. Direction
 # comes from is_higher_better — never hardcoded here.
 _TASK_METRICS: dict[str, str] = {
-    "forecasting":       "objective_wql",
-    "classification":    "objective_balanced_accuracy",
+    "forecasting": "objective_wql",
+    "classification": "objective_balanced_accuracy",
     "anomaly_detection": "objective_auc_pr",
 }
 
 # Task → human-readable column header label.
 _TASK_LABELS: dict[str, str] = {
-    "forecasting":       "rWQL",
-    "classification":    "Bal. Acc",
+    "forecasting": "rWQL",
+    "classification": "Bal. Acc",
     "anomaly_detection": "AUC-PR",
 }
 
-_LOW_COLOUR  = "#ca8a04"
+_LOW_COLOUR = "#ca8a04"
 _HIGH_COLOUR = "#16a34a"
 
 
@@ -52,7 +53,7 @@ def _metric_cell(mean_val: float) -> str:
 
 
 def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
-    low_d  = ci_low  - elo
+    low_d = ci_low - elo
     high_d = ci_high - elo
     return (
         f'<div style="line-height:1.25">'
@@ -60,7 +61,7 @@ def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
         f'<div style="font-size:0.85em">'
         f'<span style="color:{_LOW_COLOUR}">{low_d:+.0f}</span>&nbsp;'
         f'<span style="color:{_HIGH_COLOUR}">{high_d:+.0f}</span>'
-        f'</div></div>'
+        f"</div></div>"
     )
 
 
@@ -92,7 +93,7 @@ def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
     if not records:
         return pd.DataFrame()
 
-    pivot = pd.DataFrame(records).T   # datasets × solvers
+    pivot = pd.DataFrame(records).T  # datasets × solvers
     pivot = pivot.dropna(axis=1, how="any").dropna(axis=0, how="any")
 
     # Filter: keep only solvers present in every task
@@ -104,8 +105,9 @@ def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
                 if not pd.isna(pivot.loc[dataset, solver]):
                     solver_tasks[solver].add(task)
 
-    all_tasks_solvers = [s for s, tasks in solver_tasks.items()
-                         if tasks >= tasks_present]
+    all_tasks_solvers = [
+        s for s, tasks in solver_tasks.items() if tasks >= tasks_present
+    ]
     if not all_tasks_solvers:
         return pd.DataFrame()
 

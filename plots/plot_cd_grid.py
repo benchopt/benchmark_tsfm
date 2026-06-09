@@ -29,14 +29,14 @@ import sys
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scikit_posthocs as sp
-from scipy.stats import friedmanchisquare, rankdata, studentized_range
-
 from benchopt import BasePlot
+from scipy.stats import friedmanchisquare, rankdata, studentized_range
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmark_utils.metrics import is_higher_better  # noqa: E402
@@ -60,8 +60,9 @@ def discover_metrics(df: pd.DataFrame) -> list[str]:
     return cols
 
 
-def greedy_biclique(mat: pd.DataFrame, min_solvers: int = 3,
-                    min_datasets: int = 5) -> pd.DataFrame:
+def greedy_biclique(
+    mat: pd.DataFrame, min_solvers: int = 3, min_datasets: int = 5
+) -> pd.DataFrame:
     """Iteratively drop the row or column with the most NaNs until the block is
     full or one of the size floors is hit. Greedy approx for max-biclique."""
     work = mat.copy()
@@ -77,14 +78,18 @@ def greedy_biclique(mat: pd.DataFrame, min_solvers: int = 3,
     return work
 
 
-def prepare_matrix(df: pd.DataFrame, metric: str, top_k: int | None = None,
-                   ) -> tuple[pd.DataFrame, str]:
+def prepare_matrix(
+    df: pd.DataFrame,
+    metric: str,
+    top_k: int | None = None,
+) -> tuple[pd.DataFrame, str]:
     """Pivot to (solver × dataset), strict-clean, then greedy biclique if needed.
 
     Returns the cleaned matrix and a one-line note for the subplot caption.
     """
-    pivot = df.pivot_table(index="solver_name", columns="dataset_name",
-                           values=metric, aggfunc="mean")
+    pivot = df.pivot_table(
+        index="solver_name", columns="dataset_name", values=metric, aggfunc="mean"
+    )
     k0, n0 = pivot.shape
 
     # Strict: drop datasets with any NaN, drop all-tied datasets
@@ -137,8 +142,14 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
     """
     metrics = discover_metrics(df)
     if not metrics:
-        ax.text(0.5, 0.5, "global\nno objective_* columns",
-                ha="center", va="center", fontsize=10)
+        ax.text(
+            0.5,
+            0.5,
+            "global\nno objective_* columns",
+            ha="center",
+            va="center",
+            fontsize=10,
+        )
         ax.axis("off")
         return "global: no metrics"
 
@@ -153,20 +164,24 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
             continue
         # Higher-is-better → negate so rank 1 == best in both regimes
         rank_input = -mat if is_higher_better(metric) else mat
-        ranks_arr = np.vstack([
-            rankdata(rank_input[c].values, method="average")
-            for c in rank_input.columns
-        ]).T
+        ranks_arr = np.vstack(
+            [
+                rankdata(rank_input[c].values, method="average")
+                for c in rank_input.columns
+            ]
+        ).T
         ranks = pd.DataFrame(
-            ranks_arr, index=mat.index,
+            ranks_arr,
+            index=mat.index,
             columns=[f"{metric}|{c}" for c in mat.columns],
         )
         per_metric_ranks.append(ranks)
         used_metrics.append(metric)
 
     if not per_metric_ranks:
-        ax.text(0.5, 0.5, "global\nno usable metrics", ha="center",
-                va="center", fontsize=10)
+        ax.text(
+            0.5, 0.5, "global\nno usable metrics", ha="center", va="center", fontsize=10
+        )
         ax.axis("off")
         return "global: no usable metrics"
 
@@ -178,10 +193,15 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
     common_sorted = sorted(common)
 
     if len(common_sorted) < 3:
-        ax.text(0.5, 0.5,
-                f"global\nonly {len(common_sorted)} solvers shared\n"
-                f"across {len(used_metrics)} metrics",
-                ha="center", va="center", fontsize=9)
+        ax.text(
+            0.5,
+            0.5,
+            f"global\nonly {len(common_sorted)} solvers shared\n"
+            f"across {len(used_metrics)} metrics",
+            ha="center",
+            va="center",
+            fontsize=9,
+        )
         ax.axis("off")
         return f"global: only {len(common_sorted)} solvers in common"
 
@@ -206,7 +226,10 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
 
     plt.sca(ax)
     sp.critical_difference_diagram(
-        ranks=mean_ranks, sig_matrix=sig, ax=ax, alpha=alpha,
+        ranks=mean_ranks,
+        sig_matrix=sig,
+        ax=ax,
+        alpha=alpha,
         text_h_margin=0.005,
     )
 
@@ -216,19 +239,37 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
     extra = 0.18 * (y_max - y_min)
     ax.set_ylim(y_min, y_max + extra)
     y_min, y_max = ax.get_ylim()
-    bar_y   = y_max - 0.04 * (y_max - y_min)
-    tick_h  = 0.015 * (y_max - y_min)
-    bar_x0  = x_min + 0.03 * (x_max - x_min)
-    bar_x1  = bar_x0 + cd
+    bar_y = y_max - 0.04 * (y_max - y_min)
+    tick_h = 0.015 * (y_max - y_min)
+    bar_x0 = x_min + 0.03 * (x_max - x_min)
+    bar_x1 = bar_x0 + cd
     cd_colour = "#555555"
-    ax.plot([bar_x0, bar_x1], [bar_y, bar_y],
-            color=cd_colour, linewidth=1.5, solid_capstyle="butt", zorder=5)
+    ax.plot(
+        [bar_x0, bar_x1],
+        [bar_y, bar_y],
+        color=cd_colour,
+        linewidth=1.5,
+        solid_capstyle="butt",
+        zorder=5,
+    )
     for x in (bar_x0, bar_x1):
-        ax.plot([x, x], [bar_y - tick_h, bar_y + tick_h],
-                color=cd_colour, linewidth=1.5, zorder=5)
-    ax.text((bar_x0 + bar_x1) / 2, bar_y + 2 * tick_h,
-            f"CD={cd:.2f}", ha="center", va="bottom",
-            fontsize=7, color=cd_colour, zorder=5)
+        ax.plot(
+            [x, x],
+            [bar_y - tick_h, bar_y + tick_h],
+            color=cd_colour,
+            linewidth=1.5,
+            zorder=5,
+        )
+    ax.text(
+        (bar_x0 + bar_x1) / 2,
+        bar_y + 2 * tick_h,
+        f"CD={cd:.2f}",
+        ha="center",
+        va="bottom",
+        fontsize=7,
+        color=cd_colour,
+        zorder=5,
+    )
 
     ax.set_title(
         f"CD diagram — GLOBAL "
@@ -236,20 +277,23 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
         f"{n_blocks} blocks, k={k})",
         fontsize=10,
     )
-    return (f"global: k={k} blocks={n_blocks} "
-            f"chi2={chi2:.2f} p={pval:.2e} CD={cd:.3f}")
+    return f"global: k={k} blocks={n_blocks} chi2={chi2:.2f} p={pval:.2e} CD={cd:.3f}"
 
 
-def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
-                  alpha: float = 0.05, top_k: int | None = None) -> str:
+def cd_for_metric(
+    df: pd.DataFrame,
+    metric: str,
+    ax: plt.Axes,
+    alpha: float = 0.05,
+    top_k: int | None = None,
+) -> str:
     """Render a CD diagram on `ax`. Returns a one-line status for stdout."""
     if metric == GLOBAL_KEY:
         return _cd_global(df, ax, alpha=alpha)
 
     sub = df[["solver_name", "dataset_name", metric]].dropna(subset=[metric])
     if sub.empty:
-        ax.text(0.5, 0.5, f"{metric}\nno data", ha="center", va="center",
-                fontsize=10)
+        ax.text(0.5, 0.5, f"{metric}\nno data", ha="center", va="center", fontsize=10)
         ax.axis("off")
         return f"{metric}: no data"
 
@@ -257,17 +301,23 @@ def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
     k, n = mat.shape
 
     if k < 3 or n < 2:
-        ax.text(0.5, 0.5,
-                f"{metric}\nk={k}, N={n}\ninsufficient\n({note})",
-                ha="center", va="center", fontsize=9)
+        ax.text(
+            0.5,
+            0.5,
+            f"{metric}\nk={k}, N={n}\ninsufficient\n({note})",
+            ha="center",
+            va="center",
+            fontsize=9,
+        )
         ax.axis("off")
         return f"{metric}: insufficient (k={k}, N={n})"
 
     # Rank within each dataset.
     # For higher-is-better metrics, negate so rank 1 = highest value.
     rank_mat = -mat if is_higher_better(metric) else mat
-    ranks_arr = np.vstack([rankdata(rank_mat[c].values, method="average")
-                           for c in rank_mat.columns]).T
+    ranks_arr = np.vstack(
+        [rankdata(rank_mat[c].values, method="average") for c in rank_mat.columns]
+    ).T
     ranks_df = pd.DataFrame(ranks_arr, index=mat.index, columns=mat.columns)
     mean_ranks = ranks_df.mean(axis=1).rename(short_solver)
     mean_ranks.index = [short_solver(s) for s in mean_ranks.index]
@@ -309,38 +359,65 @@ def cd_for_metric(df: pd.DataFrame, metric: str, ax: plt.Axes,
     y_min, y_max = ax.get_ylim()
 
     # --- CD reference bar (top-left corner, Demšar-style) ---
-    bar_y   = y_max - 0.04 * (y_max - y_min)
-    tick_h  = 0.015 * (y_max - y_min)
-    bar_x0  = x_min + 0.03 * (x_max - x_min)
-    bar_x1  = bar_x0 + cd
+    bar_y = y_max - 0.04 * (y_max - y_min)
+    tick_h = 0.015 * (y_max - y_min)
+    bar_x0 = x_min + 0.03 * (x_max - x_min)
+    bar_x1 = bar_x0 + cd
     cd_colour = "#555555"
-    ax.plot([bar_x0, bar_x1], [bar_y, bar_y],
-            color=cd_colour, linewidth=1.5, solid_capstyle="butt", zorder=5)
+    ax.plot(
+        [bar_x0, bar_x1],
+        [bar_y, bar_y],
+        color=cd_colour,
+        linewidth=1.5,
+        solid_capstyle="butt",
+        zorder=5,
+    )
     for x in (bar_x0, bar_x1):
-        ax.plot([x, x], [bar_y - tick_h, bar_y + tick_h],
-                color=cd_colour, linewidth=1.5, zorder=5)
-    ax.text((bar_x0 + bar_x1) / 2, bar_y + 2 * tick_h,
-            f"CD={cd:.2f}", ha="center", va="bottom",
-            fontsize=7, color=cd_colour, zorder=5)
+        ax.plot(
+            [x, x],
+            [bar_y - tick_h, bar_y + tick_h],
+            color=cd_colour,
+            linewidth=1.5,
+            zorder=5,
+        )
+    ax.text(
+        (bar_x0 + bar_x1) / 2,
+        bar_y + 2 * tick_h,
+        f"CD={cd:.2f}",
+        ha="center",
+        va="bottom",
+        fontsize=7,
+        color=cd_colour,
+        zorder=5,
+    )
     # -------------------------------------------------------
 
-    title = (f"CD diagram for {metric.removeprefix('objective_').upper()} ")
+    title = f"CD diagram for {metric.removeprefix('objective_').upper()} "
     ax.set_title(title, fontsize=10)
     return f"{metric}: k={k} N={n} chi2={chi2:.2f} p={pval:.2e} CD={cd:.3f}"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("parquet", type=Path)
-    parser.add_argument("--filter", default=None,
-                        help="pandas query, e.g. \"p_dataset_problem_type=='binary'\"")
+    parser.add_argument(
+        "--filter",
+        default=None,
+        help="pandas query, e.g. \"p_dataset_problem_type=='binary'\"",
+    )
     parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--ncols", type=int, default=2,
-                        help="Columns in the subplot grid (default 2)")
-    parser.add_argument("--top-k", type=int, default=None,
-                        help="If a metric leaves more than N solvers, keep the "
-                             "top-N by mean metric (default: keep all)")
+    parser.add_argument(
+        "--ncols", type=int, default=2, help="Columns in the subplot grid (default 2)"
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="If a metric leaves more than N solvers, keep the "
+        "top-N by mean metric (default: keep all)",
+    )
     parser.add_argument("--alpha", type=float, default=0.05)
     args = parser.parse_args()
 
@@ -360,13 +437,13 @@ def main() -> int:
     nrows = math.ceil(len(metrics) / ncols)
     fig_w = 8.0 * ncols
     fig_h = 4.5 * nrows
-    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h),
-                             squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_w, fig_h), squeeze=False)
     axes_flat = axes.flatten()
 
     for i, metric in enumerate(metrics):
-        status = cd_for_metric(df, metric, axes_flat[i],
-                               alpha=args.alpha, top_k=args.top_k)
+        status = cd_for_metric(
+            df, metric, axes_flat[i], alpha=args.alpha, top_k=args.top_k
+        )
         print(f"  {status}")
     # Hide unused axes
     for j in range(len(metrics), len(axes_flat)):
@@ -374,7 +451,8 @@ def main() -> int:
 
     fig.suptitle(
         f"Critical Difference Diagrams — {args.parquet.stem}",
-        fontsize=14, y=1.0,
+        fontsize=14,
+        y=1.0,
     )
     fig.tight_layout()
     out = args.out or args.parquet.with_name(f"cd_grid_{args.parquet.stem}.png")
@@ -389,6 +467,7 @@ def main() -> int:
 # dropdown in the HTML report. One subplot per objective_* metric, selectable
 # from the sidebar.
 # ---------------------------------------------------------------------------
+
 
 def _fig_to_array(fig) -> np.ndarray:
     """Render a matplotlib Figure to a (H, W, 3) float array in [0, 1].
@@ -449,8 +528,10 @@ class Plot(BasePlot):
 
     def get_metadata(self, df, objective_column):
         if objective_column == GLOBAL_KEY:
-            title = ("Critical Difference Diagram — global "
-                     "(mean rank across every objective_* metric)")
+            title = (
+                "Critical Difference Diagram — global "
+                "(mean rank across every objective_* metric)"
+            )
         else:
             title = f"Critical Difference Diagram — {objective_column}"
         return {"title": title, "ncols": 1}
