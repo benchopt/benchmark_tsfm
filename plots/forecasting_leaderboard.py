@@ -1,6 +1,7 @@
 """Forecasting leaderboard — one row per solver, one column per metric.
 
-Columns: Rank | Solver | Elo | rWQL ↓ | rSQL ↓ | rMASE ↓ | rWAPE ↓ | rMAE ↓ | rMSE ↓ | rSMAPE ↓
+Columns: Rank | Solver | Elo | rWQL ↓ | rSQL ↓ | rMASE ↓ | rWAPE ↓ | rMAE ↓ |
+rMSE ↓ | rSMAPE ↓
 
 Elo is computed via Bradley-Terry MLE on WQL (lower-is-better), anchored at
 Seasonal Naive = 1000.  All other metric columns are the geometric mean of

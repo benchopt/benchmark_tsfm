@@ -26,7 +26,6 @@ _METRICS: list[tuple[str, str]] = [
     ("objective_auc_roc", "AUC-ROC"),
     ("objective_f1_pa", "F1-PA"),
 ]
-
 _LOW_COLOUR = "#ca8a04"
 _HIGH_COLOUR = "#16a34a"
 
@@ -131,6 +130,7 @@ class Plot(BasePlot):
             for col, label in _METRICS
         ]
         return {
-            "title": "Anomaly detection leaderboard — Elo (BT-MLE on AUC-PR) + mean metrics across datasets",
+            "title": "Anomaly detection leaderboard — Elo (BT-MLE on AUC-PR) + mean "
+            "metrics across datasets",
             "columns": columns,
         }

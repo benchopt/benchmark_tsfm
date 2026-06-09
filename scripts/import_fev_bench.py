@@ -53,7 +53,9 @@ import numpy as np
 import pandas as pd
 
 
-REPO_RAW_BASE = "https://raw.githubusercontent.com/autogluon/fev/main/benchmarks/fev_bench/results"
+REPO_RAW_BASE = (
+    "https://raw.githubusercontent.com/autogluon/fev/main/benchmarks/fev_bench/results"
+)
 REPO_API_LISTING = (
     "https://api.github.com/repos/autogluon/fev/contents/benchmarks/fev_bench/results"
 )
@@ -63,16 +65,34 @@ DEFAULT_OUT = "outputs/fev_bench_results.parquet"
 # Fallback list used when the GitHub API listing is unavailable (rate-limited
 # without a token). Kept in sync with upstream as of 2026-05.
 FALLBACK_MODELS = [
-    "autoarima", "autoets", "autotheta", "catboost", "chronos-2",
-    "chronos-bolt", "deepar", "drift", "flowstate", "lightgbm",
-    "moirai-2_0", "naive", "patchtst", "seasonal_naive", "stat_ensemble",
-    "sundial-base", "tabpfn-ts", "tft", "timesfm-2_5", "tirex", "toto-1_0",
+    "autoarima",
+    "autoets",
+    "autotheta",
+    "catboost",
+    "chronos-2",
+    "chronos-bolt",
+    "deepar",
+    "drift",
+    "flowstate",
+    "lightgbm",
+    "moirai-2_0",
+    "naive",
+    "patchtst",
+    "seasonal_naive",
+    "stat_ensemble",
+    "sundial-base",
+    "tabpfn-ts",
+    "tft",
+    "timesfm-2_5",
+    "tirex",
+    "toto-1_0",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Download
 # ---------------------------------------------------------------------------
+
 
 def list_models() -> list[str]:
     """Discover available model CSVs via the GitHub contents API.
@@ -97,8 +117,9 @@ def list_models() -> list[str]:
         if names:
             return sorted(names)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
-        print(f"[warn] GitHub listing failed: {exc}; using fallback list",
-              file=sys.stderr)
+        print(
+            f"[warn] GitHub listing failed: {exc}; using fallback list", file=sys.stderr
+        )
     return FALLBACK_MODELS
 
 
@@ -118,8 +139,9 @@ def fetch_one(model: str, cache_dir: Path) -> Path:
     return out
 
 
-def download_all(cache_dir: Path, force: bool = False,
-                 max_workers: int = 8) -> list[Path]:
+def download_all(
+    cache_dir: Path, force: bool = False, max_workers: int = 8
+) -> list[Path]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     models = list_models()
     print(f"[info] {len(models)} models to import")
@@ -154,6 +176,7 @@ def download_all(cache_dir: Path, force: bool = False,
 # Convert
 # ---------------------------------------------------------------------------
 
+
 def load_all(csv_paths: list[Path]) -> pd.DataFrame:
     frames = []
     for p in csv_paths:
@@ -180,17 +203,21 @@ def to_benchopt_parquet(fev: pd.DataFrame) -> pd.DataFrame:
 
     framework_version = fev["framework_version"].astype("string").fillna("na")
     out["solver_name"] = (
-        fev["model_name"].astype(str)
-        + "[framework_version=" + framework_version + "]"
+        fev["model_name"].astype(str) + "[framework_version=" + framework_version + "]"
     )
     out["solver_description"] = fev["model_name"].astype(str) + " (FEV-bench result)"
 
     out["dataset_name"] = (
-        "FEV[task=" + fev["task_name"].astype(str)
-        + ",horizon=" + fev["horizon"].astype(str)
-        + ",n_windows=" + fev["num_windows"].astype(str)
-        + ",seasonality=" + fev["seasonality"].astype(str)
-        + ",eval_metric=" + fev["eval_metric"].astype(str)
+        "FEV[task="
+        + fev["task_name"].astype(str)
+        + ",horizon="
+        + fev["horizon"].astype(str)
+        + ",n_windows="
+        + fev["num_windows"].astype(str)
+        + ",seasonality="
+        + fev["seasonality"].astype(str)
+        + ",eval_metric="
+        + fev["eval_metric"].astype(str)
         + "]"
     )
 
@@ -211,7 +238,9 @@ def to_benchopt_parquet(fev: pd.DataFrame) -> pd.DataFrame:
     out["p_dataset_eval_metric"] = fev["eval_metric"].astype("string")
     out["p_dataset_min_context_length"] = fev["min_context_length"].astype(np.int64)
     out["p_dataset_num_forecasts"] = fev["num_forecasts"].astype(np.int64)
-    out["p_dataset_trained_on_this_dataset"] = fev["trained_on_this_dataset"].astype(bool)
+    out["p_dataset_trained_on_this_dataset"] = fev["trained_on_this_dataset"].astype(
+        bool
+    )
     out["p_dataset_dataset_fingerprint"] = fev["dataset_fingerprint"].astype("string")
 
     out["stop_val"] = np.ones(n, dtype=np.int64)
@@ -255,40 +284,60 @@ def to_benchopt_parquet(fev: pd.DataFrame) -> pd.DataFrame:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--out", type=Path, default=Path(DEFAULT_OUT),
-                        help=f"Output parquet path (default: {DEFAULT_OUT})")
-    parser.add_argument("--cache-dir", type=Path, default=Path(DEFAULT_CACHE_DIR),
-                        help=f"CSV cache directory (default: {DEFAULT_CACHE_DIR})")
-    parser.add_argument("--no-download", action="store_true",
-                        help="Reuse cached CSVs; do not refresh from GitHub")
-    parser.add_argument("--force", action="store_true",
-                        help="Re-download CSVs even if cached")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path(DEFAULT_OUT),
+        help=f"Output parquet path (default: {DEFAULT_OUT})",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path(DEFAULT_CACHE_DIR),
+        help=f"CSV cache directory (default: {DEFAULT_CACHE_DIR})",
+    )
+    parser.add_argument(
+        "--no-download",
+        action="store_true",
+        help="Reuse cached CSVs; do not refresh from GitHub",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Re-download CSVs even if cached"
+    )
     args = parser.parse_args()
 
     if args.no_download:
         csvs = sorted(args.cache_dir.glob("*.csv"))
         if not csvs:
-            print(f"[error] --no-download given but no CSVs in {args.cache_dir}",
-                  file=sys.stderr)
+            print(
+                f"[error] --no-download given but no CSVs in {args.cache_dir}",
+                file=sys.stderr,
+            )
             return 2
     else:
         csvs = download_all(args.cache_dir, force=args.force)
 
     print(f"[info] loading {len(csvs)} CSVs")
     fev = load_all(csvs)
-    print(f"[info] {len(fev)} rows from {fev['model_name'].nunique()} models, "
-          f"{fev['task_name'].nunique()} tasks")
+    print(
+        f"[info] {len(fev)} rows from {fev['model_name'].nunique()} models, "
+        f"{fev['task_name'].nunique()} tasks"
+    )
 
     out_df = to_benchopt_parquet(fev)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_parquet(args.out, index=False)
-    metrics = sorted(c for c in out_df.columns
-                     if c.startswith("objective_") and c != "objective_name")
+    metrics = sorted(
+        c
+        for c in out_df.columns
+        if c.startswith("objective_") and c != "objective_name"
+    )
     print(f"\nWrote {args.out}")
     print(f"  rows    : {len(out_df)}")
     print(f"  solvers : {out_df['solver_name'].str.split('[').str[0].nunique()}")

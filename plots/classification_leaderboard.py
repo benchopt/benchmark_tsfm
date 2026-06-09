@@ -131,6 +131,7 @@ class Plot(BasePlot):
             for col, label in _METRICS
         ]
         return {
-            "title": "Classification leaderboard — Elo (BT-MLE on Bal. Acc) + mean metrics across datasets",
+            "title": "Classification leaderboard — Elo (BT-MLE on Bal. Acc) + mean "
+            "metrics across datasets",
             "columns": columns,
         }
