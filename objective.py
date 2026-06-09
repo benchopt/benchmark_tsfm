@@ -61,6 +61,8 @@ class Objective(BaseObjective):
     # extras in their own ``requirements`` list.
     requirements = ["scikit-learn", "aeon"]
 
+    sampling_strategy = "run_once"
+
     # Minimal config for ``benchopt test``
     test_config = {
         "dataset": {
