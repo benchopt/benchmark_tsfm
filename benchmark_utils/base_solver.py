@@ -131,7 +131,7 @@ class BaseTSFMSolver(BaseSolver):
             A fitted (or zero-shot) adapter ready for prediction
         """
 
-    def skip(self, task: str, **_) -> tuple[bool, str | None]:
+    def skip(self, task: TaskType, **_) -> tuple[bool, str | None]:
         """Skip unsupported tasks."""
         if task not in self.supported_tasks:
             return True, f"{self.name} solver does not support task={task!r}"
@@ -262,7 +262,7 @@ class BaseTSFMSolver(BaseSolver):
         # Get a list of model outputs aligned with inputs
         raw = self.forecast_batch(inputs, covariates)
 
-        per_series_preds: list[list] = [
+        per_series_preds = [
             [None] * n_cutoffs for _, n_cutoffs in per_series_shape
         ]
         for (series_idx, cutoff_idx), pred in zip(layout, raw):
