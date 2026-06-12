@@ -45,9 +45,9 @@ class _SolverEmbedEncoder:
         self.solver = solver
 
     def encode(self, X: np.ndarray) -> np.ndarray:
-        # X: (B, T, C) or (T, C); returns (B, D)
+        # X: (B, T, C) or (T, C) or (T,); returns (B, D)
         X = np.asarray(X, dtype=np.float32)
-        if X.ndim == 2:
+        if X.ndim <= 2:
             return self.solver.embed([X])
         return self.solver.embed(list(X))
 
@@ -61,7 +61,7 @@ class _SolverTimeEmbedPooledEncoder:
     def encode(self, X: np.ndarray) -> np.ndarray:
         # X: (B, T, C) or (T, C); returns (B, D)
         X = np.asarray(X, dtype=np.float32)
-        series_list = [X] if X.ndim == 2 else list(X)
+        series_list = [X] if X.ndim <= 2 else list(X)
         time_embs = self.solver.time_embed(series_list)  # list of (T'_i, D)
         return np.stack([emb.mean(axis=0) for emb in time_embs], axis=0)  # (B, D)
 
@@ -628,10 +628,12 @@ class BaseTSFMSolver(BaseSolver):
         np.ndarray, shape (N, D)
             One flat embedding per input series.
         """
-        inputs = [
-            torch.from_numpy(np.asarray(series, dtype=np.float32))
-            for series in x
-        ]
+        inputs = []
+        for series in x:
+            arr = np.asarray(series, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr[:, None]  # (T,) → (T, 1)
+            inputs.append(torch.from_numpy(arr))
         results = self.embed_batch(inputs)
         return np.stack([r.float().cpu().numpy() for r in results], axis=0)
 
@@ -674,9 +676,11 @@ class BaseTSFMSolver(BaseSolver):
         list of np.ndarray, shape (T'_i, D)
             Temporal embeddings; T'_i is model-determined per series.
         """
-        inputs = [
-            torch.from_numpy(np.asarray(series, dtype=np.float32))
-            for series in x
-        ]
+        inputs = []
+        for series in x:
+            arr = np.asarray(series, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr[:, None]  # (T,) → (T, 1)
+            inputs.append(torch.from_numpy(arr))
         results = self.time_embed_batch(inputs)
         return [r.float().cpu().numpy() for r in results]
