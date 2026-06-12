@@ -44,12 +44,14 @@ class _SolverEmbedEncoder:
     def __init__(self, solver):
         self.solver = solver
 
-    def encode(self, X: np.ndarray) -> np.ndarray:
-        # X: (B, T, C) or (T, C) or (T,); returns (B, D)
+    def encode(self, X) -> np.ndarray:
+        # X: list of (T_i, C) / (T_i,), or array (B, T, C) / (T, C) / (T,)
+        if isinstance(X, list):
+            return self.solver.embed(X)
         X = np.asarray(X, dtype=np.float32)
         if X.ndim <= 2:
-            return self.solver.embed([X])
-        return self.solver.embed(list(X))
+            return self.solver.embed([X])  # single series
+        return self.solver.embed(list(X))  # batch
 
 
 class _SolverTimeEmbedPooledEncoder:
@@ -58,10 +60,13 @@ class _SolverTimeEmbedPooledEncoder:
     def __init__(self, solver):
         self.solver = solver
 
-    def encode(self, X: np.ndarray) -> np.ndarray:
-        # X: (B, T, C) or (T, C); returns (B, D)
-        X = np.asarray(X, dtype=np.float32)
-        series_list = [X] if X.ndim <= 2 else list(X)
+    def encode(self, X) -> np.ndarray:
+        # X: list of (T_i, C) / (T_i,), or array (B, T, C) / (T, C) / (T,)
+        if isinstance(X, list):
+            series_list = X
+        else:
+            X = np.asarray(X, dtype=np.float32)
+            series_list = [X] if X.ndim <= 2 else list(X)
         time_embs = self.solver.time_embed(series_list)  # list of (T'_i, D)
         return np.stack([emb.mean(axis=0) for emb in time_embs], axis=0)  # (B, D)
 
