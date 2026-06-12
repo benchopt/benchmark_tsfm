@@ -371,7 +371,7 @@ class BaseTSFMSolver(BaseSolver):
 
         if task == "forecasting":
             if self.can_forecast:
-                return _SolverForecastAdapter(self)
+                return _SolverForecastAdapter(self, self.get_quantile_levels())
             if self.can_embed:
                 adapter = _WindowedForecastAdapter(self, window_size, pred_len)
                 adapter.fit(self.X_train)
@@ -411,7 +411,9 @@ class BaseTSFMSolver(BaseSolver):
                 adapter.fit(self.X_train, self.y_train)
                 return adapter
             if self.can_forecast:
-                return ForecastResidualAdapter(_SolverForecastAdapter(self))
+                return ForecastResidualAdapter(
+                    _SolverForecastAdapter(self, self.get_quantile_levels())
+                )
             raise NotImplementedError(
                 f"{self.name} must implement embed_batch or forecast_batch "
                 "for task='anomaly_detection'"
@@ -493,8 +495,19 @@ class BaseTSFMSolver(BaseSolver):
         # it overrides the `forecast_batch` method
         return type(self).forecast_batch is not BaseTSFMSolver.forecast_batch
 
+    def get_quantile_levels(self) -> tuple[float, ...]:
+        """Return the quantile levels to use for forecasting.
+
+        The default covers a standard set of 9 quantiles. Override to expose
+        the model's native quantile levels (e.g. ``tuple(pipeline.quantiles)``).
+        """
+        return _SolverForecastAdapter._DEFAULT_QUANTILE_LEVELS
+
     def forecast_batch(
-        self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]
+        self,
+        inputs: list[torch.Tensor],
+        covariates: Sequence[Covariates],
+        prediction_length: int,
     ) -> list[torch.Tensor]:
         """Forecast on a batch of prepared inputs.
 
@@ -504,6 +517,8 @@ class BaseTSFMSolver(BaseSolver):
             Prepared input tensors of shape: (lookback, channel)
         covariates
             Corresponding covariates for each input
+        prediction_length
+            Number of future steps to forecast
 
         Returns
         -------
@@ -563,7 +578,7 @@ class BaseTSFMSolver(BaseSolver):
         # TODO We still do this in batches in case data is very large
 
         # Get a list of model outputs aligned with inputs
-        raw = self.forecast_batch(inputs, covariates)
+        raw = self.forecast_batch(inputs, covariates, prediction_length)
 
         per_series_preds = [
             [None] * n_cutoffs for _, n_cutoffs in per_series_shape
