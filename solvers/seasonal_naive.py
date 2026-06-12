@@ -43,7 +43,7 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
                 pattern = hist[-season:]
                 reps = int(np.ceil(self.prediction_length / season))
                 preds[k] = np.tile(pattern, (reps, 1))[: self.prediction_length]
-            quantiles.append(preds[:, None, :, :])
+            quantiles.append(preds[:, :, :, None])  # (n_cutoffs, H, C, 1)
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
 
@@ -62,8 +62,6 @@ class Solver(BaseSolver):
     name = "SeasonalNaive"
 
     requirements = []
-
-    sampling_strategy = "run_once"
 
     parameters = {
         "season_length": [1, 7, 12, 24],

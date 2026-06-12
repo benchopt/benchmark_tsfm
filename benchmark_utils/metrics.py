@@ -31,7 +31,7 @@ from benchmark_utils.outputs import ForecastOutput
 
 
 def _stacked(forecast: ForecastOutput):
-    """Return (quantiles (M,Q,H,C), levels (Q,)) — flattening if needed."""
+    """Return (quantiles (M,H,C,Q), levels (Q,)) — flattening if needed."""
     if len(forecast.quantiles) != 1:
         forecast = forecast.flatten()
     if not forecast.quantiles:
@@ -43,8 +43,8 @@ def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
     """Extract (M, H, C) point forecast — median when available, else mean."""
     quants, levels = _stacked(forecast)
     if 0.5 in levels:
-        return quants[:, int(np.where(levels == 0.5)[0][0])]
-    return quants.mean(axis=1)
+        return quants[..., np.where(levels == 0.5)[0].item()]
+    return quants.mean(axis=-1)
 
 
 def _seasonal_naive_scale(y_train, seasonality: int) -> float:
@@ -60,11 +60,11 @@ def _seasonal_naive_scale(y_train, seasonality: int) -> float:
 
 def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarray:
     """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
-    quants, levels = _stacked(forecast)  # (M,Q,H,C), (Q,)
-    diff = y_true[:, None] - quants  # (M,Q,H,C)
-    levels_b = levels.reshape(1, -1, 1, 1)
+    quants, levels = _stacked(forecast)  # (M,H,C,Q), (Q,)
+    diff = y_true[..., None] - quants  # (M,H,C,Q)
+    levels_b = levels.reshape(1, 1, 1, -1)
     loss = np.maximum(levels_b * diff, (levels_b - 1.0) * diff)
-    return loss.mean(axis=(0, 2, 3))  # (Q,)
+    return loss.mean(axis=(0, 1, 2))  # (Q,)
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +158,8 @@ def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
     quants, levels = _stacked(forecast)
     li = int(np.argmin(np.abs(levels - alpha / 2.0)))
     ui = int(np.argmin(np.abs(levels - (1.0 - alpha / 2.0))))
-    lower = quants[:, li]  # (M, H, C)
-    upper = quants[:, ui]
+    lower = quants[..., li]  # (M, H, C)
+    upper = quants[..., ui]
     under = np.maximum(0.0, lower - y_true)
     over = np.maximum(0.0, y_true - upper)
     score = (upper - lower) + (2.0 / alpha) * (under + over)

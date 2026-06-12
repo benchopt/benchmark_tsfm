@@ -7,51 +7,64 @@ import numpy as np
 import torch
 from benchopt import BaseSolver
 
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
+
+TaskType = Literal["forecasting", "classification", "anomaly_detection"]
 
 
 class BaseTSFMSolver(BaseSolver):
     """Template solver for Time Series Foundation Models.
 
-    Handles common initialization, device management, and adapter setup.
-    Subclasses implement model-specific loading and adapter construction.
+    It handles common boilerplate such as:
+    - Device management (CUDA vs CPU, dtype selection)
+    - Model loading and caching in set_objective (untimed)
+    - Adapter setup based on task type
+    - Metadata and data storage
+    - Forecast batching for multi-series, multi-cutoff predictions
+
+    Subclasses only need to implement:
+    - supported_tasks: set of task names the model supports
+    - load_model(): load/initialize the model for the given device
+    - build_adapter(): create task-specific adapters
 
     Attributes
     ----------
-    supported_tasks : set of str
+    supported_tasks
         Subset of {"forecasting", "classification", "anomaly_detection"}
         that this solver supports. Must be set by subclass.
 
-    task : str
+    task
         Current task being solved (set in set_objective).
 
     X_train, y_train : array-like
         Training data (set in set_objective).
 
-    meta : dict
+    meta
         Task metadata like prediction_length, n_classes, etc.
 
-    model : object
+    model
         The loaded TSFM model (cached across multiple set_objective calls).
 
-    device : str
+    device
         "cuda" or "cpu", automatically selected in set_objective.
 
-    dtype : str | torch.dtype
+    dtype
         The data type of both data and model.
         Default to bfloat16 on CUDA, float32 elsewhere.
     """
 
-    supported_tasks: set[Literal["forecasting", "classification", "anomaly_detection"]]
-    task: Literal["forecasting", "classification", "anomaly_detection"]
+    supported_tasks: set[TaskType]
+    task: TaskType
+
     X_train: Sequence[np.ndarray]
     y_train: Sequence[np.ndarray]
     meta: dict[str, Any]
+
     model: Any
     device: str | torch.device
     dtype: str | torch.dtype
-    sampling_strategy = "run_once"
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize solver with model-specific setup.
@@ -60,6 +73,7 @@ class BaseTSFMSolver(BaseSolver):
         initialization. If overriding, call super().__init__(**kwargs).
         """
         super().__init__()
+
         # Initialize cached model state
         self._loaded_model = None
         self.model = None
@@ -68,7 +82,7 @@ class BaseTSFMSolver(BaseSolver):
 
     @property
     @abstractmethod
-    def supported_tasks(self):
+    def supported_tasks(self) -> set[TaskType]:
         """Return a set of supported task names.
 
         Returns
@@ -76,10 +90,9 @@ class BaseTSFMSolver(BaseSolver):
         set of str
             Subset of {"forecasting", "classification", "anomaly_detection"}
         """
-        pass
 
     @abstractmethod
-    def load_model(self, device, dtype):
+    def load_model(self, device: str | torch.device, dtype: torch.dtype) -> Any:
         """Load and return the TSFM model.
 
         Called once per model variant (cached by subclass if needed).
@@ -87,9 +100,9 @@ class BaseTSFMSolver(BaseSolver):
 
         Parameters
         ----------
-        device : str
+        device
             "cuda" or "cpu"
-        dtype : torch.dtype
+        dtype
             torch.bfloat16 or torch.float32
 
         Returns
@@ -97,10 +110,9 @@ class BaseTSFMSolver(BaseSolver):
         model : object
             The loaded TSFM model
         """
-        pass
 
     @abstractmethod
-    def build_adapter(self, task, model):
+    def build_adapter(self, task: TaskType, model: Any) -> Any:
         """Create and optionally fit a task-specific adapter.
 
         Called from run() for the current task and model.
@@ -108,9 +120,9 @@ class BaseTSFMSolver(BaseSolver):
 
         Parameters
         ----------
-        task : str
+        task
             One of the supported tasks
-        model : object
+        model
             The loaded TSFM model
 
         Returns
@@ -118,13 +130,8 @@ class BaseTSFMSolver(BaseSolver):
         adapter : BaseTSFMAdapter
             A fitted (or zero-shot) adapter ready for prediction
         """
-        pass
 
-    def skip(
-        self,
-        task: Literal["forecasting", "classification", "anomaly_detection"],
-        **kwargs: Any,
-    ) -> tuple[bool, str | None]:
+    def skip(self, task: TaskType, **_) -> tuple[bool, str | None]:
         """Skip unsupported tasks."""
         if task not in self.supported_tasks:
             return True, f"{self.name} solver does not support task={task!r}"
@@ -134,7 +141,7 @@ class BaseTSFMSolver(BaseSolver):
         self,
         X_train: Sequence[np.ndarray],
         y_train: Sequence[np.ndarray] | None,
-        task: Literal["forecasting", "classification", "anomaly_detection"],
+        task: TaskType,
         **meta: Any,
     ) -> None:
         """Initialize solver for a task.
@@ -145,13 +152,13 @@ class BaseTSFMSolver(BaseSolver):
 
         Parameters
         ----------
-        X_train : array-like
+        X_train
             Training data
-        y_train : array-like
+        y_train
             Training labels (may be None for unsupervised tasks)
-        task : str
+        task
             Task name
-        **meta : dict
+        **meta
             Task metadata (prediction_length, n_classes, etc.)
         """
         self.task = task
@@ -181,20 +188,24 @@ class BaseTSFMSolver(BaseSolver):
         """Return the fitted adapter."""
         return {"model": self._adapter}
 
-    def forecast_batch(self, inputs: list[torch.Tensor]) -> list[torch.Tensor]:
+    def forecast_batch(
+        self, inputs: list[torch.Tensor], covariates: Sequence[Covariates]
+    ) -> list[torch.Tensor]:
         """Forecast on a batch of prepared inputs.
 
         Subclasses must implement this to call their model's inference.
 
         Parameters
         ----------
-        inputs : list of torch.Tensor
-            Prepared input tensors (model-specific format)
+        inputs
+            Prepared input tensors of shape: (lookback, channel)
+        covariates
+            Corresponding covariates for each input
 
         Returns
         -------
         list of torch.Tensor
-            Model output tensors (model-specific format)
+            Model output tensors of shape: (horizon, channel, quantiles)
         """
         raise NotImplementedError(
             "Subclasses must implement forecast_batch to call their model"
@@ -213,11 +224,11 @@ class BaseTSFMSolver(BaseSolver):
 
         Parameters
         ----------
-        x : ForecastInput
+        x
             Input with series list and per-series cutoff indexes
-        prediction_length : int
+        prediction_length
             Forecast horizon
-        quantile_levels : tuple of float
+        quantile_levels
             Quantile levels in outputs
 
         Returns
@@ -226,6 +237,7 @@ class BaseTSFMSolver(BaseSolver):
             With per-series quantile arrays
         """
         inputs = []
+        covariates = []
         layout = []  # (series_idx, cutoff_idx) per input
         per_series_shape = []  # (C, n_cutoffs) per series
 
@@ -238,22 +250,24 @@ class BaseTSFMSolver(BaseSolver):
 
             for cutoff_idx, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]  # (T_cutoff, C)
-                inputs.append(hist)
+                inputs.append(torch.from_numpy(hist))
+                covariates.append(x.covariates.slice(cutoff, prediction_length))
                 layout.append((series_idx, cutoff_idx))
 
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
 
-        forecast = self.forecast_batch(inputs)
-        # forecast: list of model outputs aligned with inputs
+        # TODO We still do this in batches in case data is very large
 
-        Q = len(quantile_levels)
-        per_series = [
-            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
-            for C, n_cutoffs in per_series_shape
+        # Get a list of model outputs aligned with inputs
+        raw = self.forecast_batch(inputs, covariates)
+
+        per_series_preds = [
+            [None] * n_cutoffs for _, n_cutoffs in per_series_shape
         ]
+        for (series_idx, cutoff_idx), pred in zip(layout, raw):
+            per_series_preds[series_idx][cutoff_idx] = pred.float().cpu().numpy()
 
-        for (series_idx, cutoff_idx), pred in zip(layout, forecast):
-            per_series[series_idx][cutoff_idx] = pred.transpose(1, 2, 0)
+        per_series = [np.stack(preds) for preds in per_series_preds]
 
         return ForecastOutput(quantiles=per_series, quantile_levels=quantile_levels)

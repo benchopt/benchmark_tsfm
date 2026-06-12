@@ -19,7 +19,7 @@ References
 import numpy as np
 import torch
 from benchopt import BaseSolver
-from chronos import Chronos2Pipeline
+from chronos.chronos2 import Chronos2Pipeline
 
 from benchmark_utils.adapters import (
     POOLERS,
@@ -29,6 +29,7 @@ from benchmark_utils.adapters import (
     UnpooledEncoder,
 )
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
+from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
 SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
@@ -48,14 +49,14 @@ def _to_context(x):
 
 
 class _Chronos2Forecaster(BaseTSFMAdapter):
-    """Chronos-2 variant — uses native quantile output from the pipeline."""
+    """Chronos-2 forecaster — uses native quantile output from the pipeline."""
 
     def __init__(self, pipeline, prediction_length):
         self.pipeline = pipeline
         self.prediction_length = prediction_length
         self.quantile_levels = tuple(float(q) for q in pipeline.quantiles)
 
-    def predict(self, x, prediction_length=None):
+    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
         horizon = prediction_length or self.prediction_length
         inputs, layout, per_series_shape = self._build_inputs(x)
         if not inputs:
@@ -90,12 +91,12 @@ class _Chronos2Forecaster(BaseTSFMAdapter):
         # forecast: list[(n_variates, Q, prediction_length)]
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, prediction_length, C, Q), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
         for (series_idx, cutoff_idx), pred in zip(layout, forecast):
             arr = pred.float().cpu().numpy()  # (C, Q, H)
-            per_series[series_idx][cutoff_idx] = arr.transpose(1, 2, 0)
+            per_series[series_idx][cutoff_idx] = arr.transpose(2, 0, 1)  # (H, C, Q)
         return ForecastOutput(
             quantiles=per_series, quantile_levels=self.quantile_levels
         )
@@ -182,8 +183,6 @@ class Solver(BaseSolver):
     name = "Chronos2"
 
     requirements = ["pip::chronos-forecasting>=2.2,<3"]
-
-    sampling_strategy = "run_once"
 
     parameters = {
         "model_size": ["small"],

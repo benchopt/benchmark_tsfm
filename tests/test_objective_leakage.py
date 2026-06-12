@@ -25,7 +25,7 @@ class _Clean(BaseTSFMAdapter):
             series = np.asarray(series)
             C = series.shape[1]
             arr = np.stack([np.broadcast_to(series[:c][-1], (H, C)) for c in cutoffs])[
-                :, None, :, :
+                :, :, :, None
             ]
             qs.append(arr.astype(np.float64))
         return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
@@ -38,7 +38,7 @@ class _Leaky(BaseTSFMAdapter):
             series = np.asarray(series)
             C = series.shape[1]
             arr = np.stack([series[c : c + H].reshape(H, C) for c in cutoffs])[
-                :, None, :, :
+                :, :, :, None
             ]
             qs.append(arr.astype(np.float64))
         return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))

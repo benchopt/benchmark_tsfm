@@ -158,7 +158,7 @@ class Objective(BaseObjective):
                 "leakage": 1.0,
             }
 
-        forecast = model.predict(forecast_input).flatten()  # (M, Q, H, C)
+        forecast = model.predict(forecast_input).flatten()  # (M, H, C, Q)
 
         # Concatenate per-series targets into a single (M, H, C) array, in the
         # same order the flattened forecast iterates (series-major, cutoff-minor).
@@ -173,6 +173,10 @@ class Objective(BaseObjective):
             name: ALL_METRICS[name](y_true, forecast, **kwargs) for name in self.metrics
         }
         result["leakage"] = 0.0
+        # benchopt's stopping criterion monitors a single 'value' key; expose
+        # the primary requested metric under that name (mirrors the leakage
+        # path above, which sets value=inf as the worst possible score).
+        result["value"] = result[self.metrics[0]]
         return result
 
     # --- classification ------------------------------------------------
@@ -228,7 +232,7 @@ class Objective(BaseObjective):
                     qs = []
                     for series, cutoffs in zip(x.x, x.cutoff_indexes):
                         C = series.shape[1] if series.ndim == 2 else 1
-                        qs.append(np.zeros((len(cutoffs), 1, H, C), dtype=np.float32))
+                        qs.append(np.zeros((len(cutoffs), H, C, 1), dtype=np.float32))
                     return ForecastOutput(quantiles=qs, quantile_levels=(0.5,))
                 elif self._task == "classification":
                     return np.zeros(len(x), dtype=np.int64)

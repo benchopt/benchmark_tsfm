@@ -105,8 +105,8 @@ class _MomentForecaster(BaseTSFMAdapter):
 
             # Stack predictions: (n_cutoffs, prediction_length, C)
             stacked = np.stack(preds_per_series, axis=0)
-            # Add quantile dimension: (n_cutoffs, 1, prediction_length, C)
-            quantiles.append(stacked[:, None, :, :])
+            # Add quantile dimension: (n_cutoffs, prediction_length, C, 1)
+            quantiles.append(stacked[:, :, :, None])
 
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 

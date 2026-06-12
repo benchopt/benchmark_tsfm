@@ -15,7 +15,7 @@ forecasting:
 
   :class:`~benchmark_utils.outputs.ForecastOutput` is a single object
   covering every input series — its ``quantiles`` field is a Sequence
-  of ``(n_cutoffs_i, Q, prediction_length, C)`` arrays, one per series,
+  of ``(n_cutoffs_i, prediction_length, C, Q)`` arrays, one per series,
   with a shared ``quantile_levels`` tuple. Point forecasters set
   ``quantile_levels=(0.5,)`` and Q=1.
 

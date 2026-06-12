@@ -112,7 +112,8 @@ class _Toto2Forecaster(BaseTSFMAdapter):
                 has_missing_values=has_missing_values,
             )
 
-        return quantiles[:, 0].detach().float().cpu().numpy().transpose(0, 2, 1)
+        # quantiles[:, 0]: (Q, C, H) -> (H, C, Q)
+        return quantiles[:, 0].detach().float().cpu().numpy().transpose(2, 1, 0)
 
     def predict(self, x: ForecastInput) -> ForecastOutput:
         per_series = []
@@ -126,9 +127,9 @@ class _Toto2Forecaster(BaseTSFMAdapter):
             forecasts = np.empty(
                 (
                     len(cutoffs),
-                    len(self.quantile_levels),
                     self.prediction_length,
                     C,
+                    len(self.quantile_levels),
                 ),
                 dtype=np.float32,
             )
