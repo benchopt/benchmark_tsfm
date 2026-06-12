@@ -16,6 +16,7 @@ References:
 import numpy as np
 import torch
 from benchopt import BaseSolver
+from momentfm import MOMENTPipeline
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -28,13 +29,6 @@ from benchmark_utils.adapters import (
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
-
-try:
-    from momentfm import MOMENTPipeline
-
-    HAS_MOMENT = True
-except ImportError:
-    HAS_MOMENT = False
 
 SUPPORTED_TASKS = {"forecasting", "classification"}
 
@@ -111,8 +105,8 @@ class _MomentForecaster(BaseTSFMAdapter):
 
             # Stack predictions: (n_cutoffs, prediction_length, C)
             stacked = np.stack(preds_per_series, axis=0)
-            # Add quantile dimension: (n_cutoffs, 1, prediction_length, C)
-            quantiles.append(stacked[:, None, :, :])
+            # Add quantile dimension: (n_cutoffs, prediction_length, C, 1)
+            quantiles.append(stacked[:, :, :, None])
 
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
@@ -170,28 +164,29 @@ class Solver(BaseSolver):
 
     # moment-fm package required for the model
     requirements = [
-        "pip::moment @ git+https://github.com/moment-timeseries-foundation-model/moment.git",
+        "pip::momentfm @ git+https://github.com/moment-timeseries-foundation-model/moment.git",
     ]
 
     sampling_strategy = "run_once"
 
     parameters = {
         "checkpoint": ["AutonLab/MOMENT-1-large"],
-        "task_config": ["forecasting"],  # forecasting or classification
         "pooler": ["mean"],  # pooler for classification embeddings
         "batch_size": [32],
         "classifier": ["log_reg"],
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
+    }
+
+    test_config = {
+        "checkpoint": "AutonLab/MOMENT-1-small",
     }
 
     def skip(self, task, **kwargs):
         if task not in SUPPORTED_TASKS:
             return True, f"Moment solver does not support task={task!r}"
-        if not HAS_MOMENT:
-            return True, "momentfm package not installed"
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
@@ -251,8 +246,10 @@ class Solver(BaseSolver):
                 task="classification",
                 n_classes=self.meta.get("n_classes"),
                 classifier=self.classifier,
-                max_iter=self.max_iter,
                 n_estimators=self.n_estimators,
+                C=self.C,
+                alpha=self.alpha,
+                penalty=self.penalty,
             )
             self._adapter.fit(self.X_train, self.y_train)
         else:

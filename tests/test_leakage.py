@@ -27,10 +27,10 @@ class CleanForecaster(BaseTSFMAdapter):
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            arr = np.empty((len(cutoffs), 1, H, C), dtype=np.float64)
+            arr = np.empty((len(cutoffs), H, C, 1), dtype=np.float64)
             for k, cut in enumerate(cutoffs):
                 last = series[:cut][-1]
-                arr[k, 0] = np.broadcast_to(last, (H, C))
+                arr[k, :, :, 0] = np.broadcast_to(last, (H, C))
             quantiles.append(arr)
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
@@ -43,9 +43,9 @@ class LeakyForecaster(BaseTSFMAdapter):
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            arr = np.empty((len(cutoffs), 1, H, C), dtype=np.float64)
+            arr = np.empty((len(cutoffs), H, C, 1), dtype=np.float64)
             for k, cut in enumerate(cutoffs):
-                arr[k, 0] = series[cut:cut + H].reshape(H, C)
+                arr[k, :, :, 0] = series[cut : cut + H].reshape(H, C)
             quantiles.append(arr)
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
@@ -59,9 +59,9 @@ class GlobalScaleLeaker(BaseTSFMAdapter):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
             global_mean = series.mean(axis=0)  # peeks at the future
-            arr = np.empty((len(cutoffs), 1, H, C), dtype=np.float64)
+            arr = np.empty((len(cutoffs), H, C, 1), dtype=np.float64)
             for k in range(len(cutoffs)):
-                arr[k, 0] = np.broadcast_to(global_mean, (H, C))
+                arr[k, :, :, 0] = np.broadcast_to(global_mean, (H, C))
             quantiles.append(arr)
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
@@ -103,9 +103,7 @@ def test_future_covariates_are_not_perturbed():
             for i, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
                 C = np.asarray(series).shape[1]
                 fc = np.asarray(x.covariates.future_covars[i])  # (H, C)
-                arr = np.stack(
-                    [fc.reshape(H, C) for _ in cutoffs]
-                )[:, None, :, :]
+                arr = np.stack([fc.reshape(H, C) for _ in cutoffs])[:, :, :, None]
                 quantiles.append(arr.astype(np.float64))
             return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
@@ -133,8 +131,6 @@ def test_series_with_no_future_is_skipped():
 
 
 def test_max_series_limits_probe(forecast_input):
-    report = detect_forecast_leakage(
-        LeakyForecaster(), forecast_input, max_series=1
-    )
+    report = detect_forecast_leakage(LeakyForecaster(), forecast_input, max_series=1)
     assert report.n_series_tested == 1
     assert report.offending_series == [0]

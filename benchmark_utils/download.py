@@ -1,17 +1,20 @@
-"""Shared download helper for the TSB-UAD public dataset bundle.
+"""Shared download helpers:
+- for the TSB-UAD public dataset bundle.
+- for MITDB
+
 """
+
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import pooch
-
 from benchopt import config
 
+import pooch
+import tqdm  # noqa: F401
 
 _BUNDLE_URL = "https://www.thedatum.org/datasets/TSB-UAD-Public.zip"
-_BUNDLE_SHA256 = (
-    "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"
-)
+_BUNDLE_SHA256 = "ff4aa83a5a111835d410d962152e8dbebcda1039b778bae45b6b9c3f46dd49a1"
 _BUNDLE_FILENAME = "TSB-UAD-Public.zip"
 _BUNDLE_ROOT = "TSB-UAD-Public"
 
@@ -35,35 +38,13 @@ _SUBDIR = {
     "YAHOO": "YAHOO",
 }
 
-
 _BASE_NAMES = {
-    "YAHOO": 'Yahoo_', 
-    "ECG" : 'MBA_ECG',
-    "SVDB": '8',
+    "YAHOO": "Yahoo_",
+    "ECG": "MBA_ECG",
+    "SVDB": "8",
 }
 
-_FILES_EXT = {
-    "YAHOO": '.out',
-    "ECG": '.out',
-    "SVDB": '.out'
-}
-def fetch_mitdb() -> Path:
-    """Return the local directory holding MIT-BIH Arrhythmia Database files.
-
-    Downloads the database via ``wfdb.dl_database`` on first call; subsequent
-    calls are cache hits if the header files are already present.
-
-    Returns
-    -------
-    Path  directory containing ``<record_id>.hea / .dat / .atr`` files
-    """
-    import wfdb
-    _MITDB_DIR = Path(__file__).parent.parent / "data" / "mitdb"
-
-    _MITDB_DIR.mkdir(parents=True, exist_ok=True)
-    if not (_MITDB_DIR / "100.hea").exists():
-        wfdb.dl_database("mitdb", dl_dir=str(_MITDB_DIR))
-    return _MITDB_DIR
+_FILES_EXT = {"YAHOO": ".out", "ECG": ".out", "SVDB": ".out"}
 
 
 def fetch_tsb_uad(name: str) -> Path:
@@ -75,15 +56,8 @@ def fetch_tsb_uad(name: str) -> Path:
     """
     if name not in _SUBDIR:
         raise KeyError(
-            f"{name!r} is not a TSB-UAD dataset name. "
-            f"Known names: {sorted(_SUBDIR)}"
+            f"{name!r} is not a TSB-UAD dataset name. Known names: {sorted(_SUBDIR)}"
         )
-
-    try:
-        import tqdm  # noqa: F401
-        progressbar = True
-    except ImportError:
-        progressbar = False
 
     cache_root = Path(config.get_data_path(key=_BUNDLE_ROOT))
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -97,7 +71,7 @@ def fetch_tsb_uad(name: str) -> Path:
     registry.fetch(
         _BUNDLE_FILENAME,
         processor=pooch.Unzip(extract_dir="."),
-        progressbar=progressbar,
+        progressbar=True,
     )
 
     subdir = cache_root / _BUNDLE_ROOT / _SUBDIR[name]
@@ -111,7 +85,7 @@ def fetch_tsb_uad(name: str) -> Path:
 def load_data_tsb_uad(path, records_ids, train_ratio, number):
     """
     Load series from a dataset given the path, the record ids
-    to get and a training ratio. 
+    to get and a training ratio.
     """
     # files names
     path = Path(path)
@@ -121,8 +95,7 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
     # get ids of records
     if records_ids in (None, "all", ["all"]):
         records_ids = [
-            f.stem for f in path.glob('*'+extension)
-            if f.stem.startswith(base_name)
+            f.stem for f in path.glob("*" + extension) if f.stem.startswith(base_name)
         ]
 
     if number in (None, -1):
@@ -130,7 +103,6 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
 
     X_train, X_test, y_test = [], [], []
     for i, id in enumerate(records_ids):
-
         if i >= number:
             break
 
@@ -147,4 +119,25 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
         X_test.append(data[split:, 0].astype(np.float32))
         y_test.append(data[split:, 1].astype(np.int32))
 
-    return X_train, X_test, y_test       
+    return X_train, X_test, y_test
+
+
+def fetch_mitdb() -> Path:
+    """Return the local directory holding MIT-BIH Arrhythmia Database files.
+
+    Downloads the database via ``wfdb.dl_database`` on first call; subsequent
+    calls are cache hits if the header files are already present.
+
+    Returns
+    -------
+    Path  directory containing ``<record_id>.hea / .dat / .atr`` files
+    """
+    import wfdb
+
+    # ensure config directory exists
+    db_path = config.get_data_path(key="mitdb")
+    db_path.mkdir(parents=True, exist_ok=True)
+
+    if not (db_path / "100.hea").exists():
+        wfdb.dl_database("mitdb", dl_dir=str(db_path))
+    return db_path

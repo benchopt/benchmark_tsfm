@@ -33,3 +33,10 @@ class ForecastInput:
     x: Sequence[np.ndarray]
     cutoff_indexes: Sequence[Sequence[int]]
     covariates: Covariates = field(default_factory=Covariates)
+
+    def __post_init__(self):
+        if len(self.x) != len(self.cutoff_indexes):
+            raise ValueError("x and cutoff_indexes must have the same length")
+        # TODO len(self.covariates) == 0 for some
+        # if len(self.x) != len(self.covariates):
+        #     raise ValueError("x and covariates must have the same length")

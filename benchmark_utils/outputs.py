@@ -3,7 +3,7 @@
 Forecasting predict() returns a single :class:`ForecastOutput` covering
 every input series in the matching :class:`ForecastInput`. The output is
 shape-aware: ``quantiles[i]`` is the per-series ndarray
-``(n_cutoffs_i, Q, prediction_length, C)``, aligned with the same index
+``(n_cutoffs_i, prediction_length, C, Q)``, aligned with the same index
 order as the input ``x``.
 """
 
@@ -21,7 +21,7 @@ class ForecastOutput:
     ----------
     quantiles : sequence of np.ndarray
         One ndarray per series, each shape
-        ``(n_cutoffs_i, Q, prediction_length, C)``. ``quantiles[i][k, q]``
+        ``(n_cutoffs_i, prediction_length, C, Q)``. ``quantiles[i][k, :, :, q]``
         is the forecast for series ``i``, cutoff ``k``, at quantile level
         ``quantile_levels[q]``.
     quantile_levels : sequence of float
@@ -38,32 +38,34 @@ class ForecastOutput:
             if arr.ndim != 4:
                 raise ValueError(
                     f"quantiles[{i}] must have ndim=4 "
-                    f"(n_cutoffs, Q, prediction_length, C); got shape {arr.shape}"
+                    f"(n_cutoffs, prediction_length, C, Q); got shape {arr.shape}"
                 )
-            if arr.shape[1] != Q:
+            if arr.shape[3] != Q:
                 raise ValueError(
-                    f"quantiles[{i}].shape[1] ({arr.shape[1]}) must equal "
+                    f"quantiles[{i}].shape[3] ({arr.shape[3]}) must equal "
                     f"len(quantile_levels) ({Q})"
                 )
 
     @property
     def point(self) -> Sequence[np.ndarray]:
-        """Best point estimate per series — median when available, else mean across quantiles.
+        """Best point estimate per series.
+
+        By default, use the median when available, else mean across quantiles.
 
         Each entry has shape ``(n_cutoffs_i, prediction_length, C)``.
         """
         levels = list(self.quantile_levels)
         if 0.5 in levels:
             idx = levels.index(0.5)
-            return [arr[:, idx, :, :] for arr in self.quantiles]
-        return [arr.mean(axis=1) for arr in self.quantiles]
+            return [arr[..., idx] for arr in self.quantiles]
+        return [arr.mean(axis=-1) for arr in self.quantiles]
 
     def flatten(self) -> "ForecastOutput":
-        """Collapse per-series quantile arrays into a single ``(M, Q, H, C)`` array.
+        """Collapse per-series quantile arrays into a single ``(M, H, C, Q)`` array.
 
         Returns a new :class:`ForecastOutput` whose ``quantiles`` list contains
         exactly one element — a stacked array of shape
-        ``(total_windows, Q, prediction_length, C)`` — where ``total_windows``
+        ``(total_windows, prediction_length, C, Q)`` — where ``total_windows``
         is the sum of ``n_cutoffs_i`` across all series.  The
         ``quantile_levels`` tuple is preserved unchanged.
 
@@ -76,11 +78,11 @@ class ForecastOutput:
             A new (frozen) instance with ``quantiles = [stacked]``.
         """
         windows = []
-        for arr in self.quantiles:          # arr: (n_cutoffs_i, Q, H, C)
+        for arr in self.quantiles:  # arr: (n_cutoffs_i, H, C, Q)
             for k in range(arr.shape[0]):
-                windows.append(arr[k])      # (Q, H, C)
+                windows.append(arr[k])  # (H, C, Q)
         if not windows:
             # Edge case: no predictions at all — return empty output
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
-        stacked = np.stack(windows, axis=0)  # (M, Q, H, C)
+        stacked = np.stack(windows, axis=0)  # (M, H, C, Q)
         return ForecastOutput(quantiles=[stacked], quantile_levels=self.quantile_levels)

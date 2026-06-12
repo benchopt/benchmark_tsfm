@@ -17,21 +17,21 @@ event_detection    : metric(y_true, y_pred, **kw) -> float
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     f1_score,
     roc_auc_score,
-    average_precision_score,
 )
 
 from benchmark_utils.outputs import ForecastOutput
-
 
 # ---------------------------------------------------------------------------
 # Forecasting — internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _stacked(forecast: ForecastOutput):
-    """Return (quantiles (M,Q,H,C), levels (Q,)) — flattening if needed."""
+    """Return (quantiles (M,H,C,Q), levels (Q,)) — flattening if needed."""
     if len(forecast.quantiles) != 1:
         forecast = forecast.flatten()
     if not forecast.quantiles:
@@ -43,8 +43,8 @@ def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
     """Extract (M, H, C) point forecast — median when available, else mean."""
     quants, levels = _stacked(forecast)
     if 0.5 in levels:
-        return quants[:, int(np.where(levels == 0.5)[0][0])]
-    return quants.mean(axis=1)
+        return quants[..., np.where(levels == 0.5)[0].item()]
+    return quants.mean(axis=-1)
 
 
 def _seasonal_naive_scale(y_train, seasonality: int) -> float:
@@ -60,16 +60,17 @@ def _seasonal_naive_scale(y_train, seasonality: int) -> float:
 
 def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarray:
     """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
-    quants, levels = _stacked(forecast)            # (M,Q,H,C), (Q,)
-    diff = y_true[:, None] - quants                # (M,Q,H,C)
-    levels_b = levels.reshape(1, -1, 1, 1)
+    quants, levels = _stacked(forecast)  # (M,H,C,Q), (Q,)
+    diff = y_true[..., None] - quants  # (M,H,C,Q)
+    levels_b = levels.reshape(1, 1, 1, -1)
     loss = np.maximum(levels_b * diff, (levels_b - 1.0) * diff)
-    return loss.mean(axis=(0, 2, 3))               # (Q,)
+    return loss.mean(axis=(0, 1, 2))  # (Q,)
 
 
 # ---------------------------------------------------------------------------
 # Forecasting — point metrics
 # ---------------------------------------------------------------------------
+
 
 def mae(y_true, forecast: ForecastOutput, **_):
     """Mean Absolute Error, averaged over all windows, horizons, channels."""
@@ -115,6 +116,7 @@ def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, 
 # Forecasting — probabilistic metrics
 # ---------------------------------------------------------------------------
 
+
 def pinball(y_true, forecast: ForecastOutput, **_):
     """Mean pinball (quantile) loss, averaged over all quantile levels."""
     return float(_pinball_per_level(y_true, forecast).mean())
@@ -156,8 +158,8 @@ def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
     quants, levels = _stacked(forecast)
     li = int(np.argmin(np.abs(levels - alpha / 2.0)))
     ui = int(np.argmin(np.abs(levels - (1.0 - alpha / 2.0))))
-    lower = quants[:, li]                              # (M, H, C)
-    upper = quants[:, ui]
+    lower = quants[..., li]  # (M, H, C)
+    upper = quants[..., ui]
     under = np.maximum(0.0, lower - y_true)
     over = np.maximum(0.0, y_true - upper)
     score = (upper - lower) + (2.0 / alpha) * (under + over)
@@ -167,6 +169,7 @@ def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
+
 
 def accuracy(y_true, y_pred):
     return float(accuracy_score(y_true, y_pred))
@@ -183,6 +186,7 @@ def f1_weighted(y_true, y_pred):
 # ---------------------------------------------------------------------------
 # Anomaly detection
 # ---------------------------------------------------------------------------
+
 
 def auc_roc(y_true, y_score):
     """Area under ROC curve. Expects point-level scores and labels.
@@ -258,6 +262,7 @@ def _point_adjust(y_true, y_pred):
     if in_anomaly and y_pred[seg_start:].any():
         y_pred_adj[seg_start:] = 1
     return y_pred_adj
+
 
 # VUS metrics
 # Ported from https://github.com/thedatumorg/VUS, vus/utils/metrics.py
@@ -363,7 +368,7 @@ def _range_auc_volume(labels, score, window_size, thre=250):
         precision = TP / ks
 
         if L:
-            max_scores = np.sort(np.array([score[s:e + 1].max() for s, e in L]))
+            max_scores = np.sort(np.array([score[s : e + 1].max() for s, e in L]))
             existence = len(L) - np.searchsorted(max_scores, thresholds, side="left")
             existence_ratio = existence / len(L)
         else:
@@ -372,8 +377,8 @@ def _range_auc_volume(labels, score, window_size, thre=250):
         tpr = recall * existence_ratio
 
         tf = np.zeros((thre + 2, 2))
-        tf[1:thre + 1, 0] = tpr
-        tf[1:thre + 1, 1] = fpr
+        tf[1 : thre + 1, 0] = tpr
+        tf[1 : thre + 1, 1] = fpr
         tf[-1] = (1, 1)
         prec = np.ones(thre + 1)
         prec[1:] = precision
@@ -414,9 +419,11 @@ def vus_pr(y_true, y_score, slidingWindow=100, thre=250):
     """Volume Under the Surface (PR). Averaged per series."""
     return _vus_per_series(y_true, y_score, slidingWindow, thre)[1]
 
+
 # ---------------------------------------------------------------------------
 # Event detection
 # ---------------------------------------------------------------------------
+
 
 def _iou_1d(s1, w1, s2, w2):
     s1, w1, s2, w2 = float(s1), float(w1), float(s2), float(w2)
@@ -462,8 +469,11 @@ def map_iou(y_true, y_pred, iou_threshold=0.5):
         gt_by_series = {}
         n_gt = 0
         for i, gt in enumerate(y_true):
-            boxes = [(row[0], row[1]) for row in gt
-                     if len(gt) > 0 and np.argmax(row[2:]) == k]
+            boxes = [
+                (row[0], row[1])
+                for row in gt
+                if len(gt) > 0 and np.argmax(row[2:]) == k
+            ]
             gt_by_series[i] = boxes
             n_gt += len(boxes)
 
@@ -531,5 +541,31 @@ EVENT_METRICS = {
     "map_iou": map_iou,
 }
 
-ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS,
-               **EVENT_METRICS}
+ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS}
+
+
+
+# ---------------------------------------------------------------------------
+# Direction: which metrics are better when larger
+# ---------------------------------------------------------------------------
+# Direction is an intrinsic property of a metric, so it is declared here next
+# to the definitions — this is the single source of truth. The objective
+# re-exports it and every plot imports ``is_higher_better`` from here; nothing
+# redeclares this knowledge. Forecasting losses (mae/mse/rmse/mase/smape) and
+# FEV error metrics (wql/sql/wape/...) are all lower-is-better and so are
+# simply absent from the set below.
+HIGHER_IS_BETTER = frozenset({
+    "accuracy", "balanced_accuracy", "f1_weighted",   # classification
+    "auc_roc", "auc_pr", "f1_pa",                      # anomaly detection
+})
+
+
+def is_higher_better(metric: str) -> bool:
+    """Whether a larger value of ``metric`` means a better model.
+
+    Accepts either a bare metric name (``"auc_pr"``) or a benchopt results
+    column (``"objective_auc_pr"``). Unknown metrics default to
+    lower-is-better, the convention for forecasting/error losses.
+    """
+    name = metric[len("objective_"):] if metric.startswith("objective_") else metric
+    return name in HIGHER_IS_BETTER
