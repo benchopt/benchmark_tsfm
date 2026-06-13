@@ -10,7 +10,9 @@ References:
 """
 
 import numpy as np
+import torch
 from benchopt import BaseSolver
+from toto2 import Toto2Model
 
 from benchmark_utils.adapters import (
     Encoder,
@@ -110,7 +112,8 @@ class _Toto2Forecaster(BaseTSFMAdapter):
                 has_missing_values=has_missing_values,
             )
 
-        return quantiles[:, 0].detach().float().cpu().numpy().transpose(0, 2, 1)
+        # quantiles[:, 0]: (Q, C, H) -> (H, C, Q)
+        return quantiles[:, 0].detach().float().cpu().numpy().transpose(2, 1, 0)
 
     def predict(self, x: ForecastInput) -> ForecastOutput:
         per_series = []
@@ -124,9 +127,9 @@ class _Toto2Forecaster(BaseTSFMAdapter):
             forecasts = np.empty(
                 (
                     len(cutoffs),
-                    len(self.quantile_levels),
                     self.prediction_length,
                     C,
+                    len(self.quantile_levels),
                 ),
                 dtype=np.float32,
             )
@@ -276,7 +279,11 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
+    }
+
+    test_config = {
+        "checkpoint": "Datadog/Toto-2.0-4m",
     }
 
     def skip(self, task, **kwargs):
@@ -285,9 +292,6 @@ class Solver(BaseSolver):
         return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
-        import torch
-        from toto2 import Toto2Model
-
         self.task = task
         self.X_train = X_train
         self.y_train = y_train
@@ -333,7 +337,9 @@ class Solver(BaseSolver):
             self._adapter = adapter
 
         elif self.task == "anomaly_detection":
-            self._adapter = ForecastResidualAdapter(forecaster, prediction_length=1)
+            self._adapter = ForecastResidualAdapter(
+                forecaster
+            )
 
     def get_result(self):
         return {"model": self._adapter}

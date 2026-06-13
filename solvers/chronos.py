@@ -22,11 +22,9 @@ from benchopt import BaseSolver
 from chronos import ChronosPipeline
 
 from benchmark_utils.adapters import (
+    POOLERS,
     Encoder,
-    LastPooler,
     LinearProbeAdapter,
-    MaxPooler,
-    MeanPooler,
     UnpooledEncoder,
 )
 from benchmark_utils.adapters.base import BaseTSFMAdapter
@@ -36,17 +34,18 @@ from benchmark_utils.outputs import ForecastOutput
 
 SUPPORTED_TASKS = {"forecasting", "classification", "anomaly_detection"}
 
-POOLERS = {
-    "mean": MeanPooler,
-    "max": MaxPooler,
-    "last": LastPooler,
-}
-
 
 class _ChronosForecaster(BaseTSFMAdapter):
     """Batched Chronos v1 adapter; quantiles are derived from sample draws."""
 
     DEFAULT_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+
+    # Cap how many (series, cutoff, channel) histories go through one
+    # ``pipeline.predict`` call. Chronos v1 left-pads the whole list into a
+    # single T5 forward whose attention is O(L^2) in the (padded) history
+    # length, so batching every series at once blows up memory on datasets
+    # with many long series (e.g. m4_weekly). Chunking bounds peak memory.
+    PREDICT_BATCH_SIZE = 16
 
     def __init__(self, pipeline, prediction_length, quantile_levels=None):
         self.pipeline = pipeline
@@ -63,11 +62,23 @@ class _ChronosForecaster(BaseTSFMAdapter):
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=self.quantile_levels)
 
+        # Chronos v1 forecasts by Monte-Carlo sampling, so it is
+        # non-deterministic by default. Seed before sampling so the same
+        # history yields the same draws — required for the behavioural
+        # leakage probe (benchmark_utils.leakage), which compares two
+        # predict() calls on identical history and would otherwise read
+        # sampling noise as a leak. Seeding once (before the chunk loop)
+        # keeps the draw sequence deterministic across calls because the
+        # inputs — and thus the chunking — are identical between calls.
+        torch.manual_seed(0)
+        chunks = []
         with torch.no_grad():
-            output = self.pipeline.predict(
-                inputs,
-                prediction_length=horizon,
-            )
+            for start in range(0, len(inputs), self.PREDICT_BATCH_SIZE):
+                batch = inputs[start:start + self.PREDICT_BATCH_SIZE]
+                chunks.append(
+                    self.pipeline.predict(batch, prediction_length=horizon)
+                )
+        output = torch.cat(chunks, dim=0)  # (n_inputs, num_samples, H)
         return self._assemble_output(output, layout, per_series_shape, horizon)
 
     def _build_inputs(self, x):
@@ -99,11 +110,12 @@ class _ChronosForecaster(BaseTSFMAdapter):
 
         Q = len(self.quantile_levels)
         per_series = [
-            np.empty((n_cutoffs, Q, prediction_length, C), dtype=np.float32)
+            np.empty((n_cutoffs, prediction_length, C, Q), dtype=np.float32)
             for C, n_cutoffs in per_series_shape
         ]
         for i, (series_idx, cutoff_idx, c) in enumerate(layout):
-            per_series[series_idx][cutoff_idx, :, :, c] = q_arr[i]
+            # q_arr[i] is (Q, H); store as (H, Q) at channel c.
+            per_series[series_idx][cutoff_idx, :, c, :] = q_arr[i].T
 
         return ForecastOutput(
             quantiles=per_series, quantile_levels=self.quantile_levels
@@ -252,8 +264,6 @@ class Solver(BaseSolver):
 
     requirements = ["pip::chronos-forecasting>=2.2", "pip::torch"]
 
-    sampling_strategy = "run_once"
-
     parameters = {
         "model_size": ["small"],
         "layer": [None],
@@ -262,7 +272,7 @@ class Solver(BaseSolver):
         "penalty": ["l2"],
         "C": [1.0],
         "alpha": [1.0],
-        "n_iterators": [100],
+        "n_estimators": [100],
     }
 
     def skip(self, task, **kwargs):

@@ -45,8 +45,11 @@ import numpy as np
 import pandas as pd
 from benchopt import BaseDataset
 
-from benchmark_utils.covariates import Covariates
+# Requirement checks
+import fsspec  # noqa: F401
+from huggingface_hub import hf_hub_download  # noqa: F401
 
+from benchmark_utils.covariates import Covariates
 
 _HF_PARQUET = (
     "hf://datasets/theforecastingcompany/enedis-with-holidays/"
@@ -77,9 +80,7 @@ _DEFAULT_HORIZON = {"30min": 480, "6h": 40, "D": 10}
 
 def _stack_channels(seq) -> np.ndarray:
     """Stack a GluonTS ``Sequence(Sequence(float32))`` cell into ``(T, C)``."""
-    return np.stack(
-        [np.asarray(channel, dtype=np.float32) for channel in seq], axis=-1
-    )
+    return np.stack([np.asarray(channel, dtype=np.float32) for channel in seq], axis=-1)
 
 
 class Dataset(BaseDataset):
@@ -100,7 +101,7 @@ class Dataset(BaseDataset):
 
     name = "Enedis"
 
-    requirements = ["pip::huggingface_hub", "pyarrow", "pandas"]
+    requirements = ["pip::huggingface_hub", "fsspec"]
 
     parameters = {
         "freq": ["D", "6h", "30min"],
@@ -111,8 +112,7 @@ class Dataset(BaseDataset):
     def get_data(self):
         if self.freq not in _ITEM_ID:
             raise ValueError(
-                f"Unknown freq {self.freq!r}; expected one of "
-                f"{sorted(_ITEM_ID)}."
+                f"Unknown freq {self.freq!r}; expected one of {sorted(_ITEM_ID)}."
             )
 
         df = pd.read_parquet(_HF_PARQUET)
@@ -150,12 +150,12 @@ class Dataset(BaseDataset):
             cutoffs = cutoffs[:1]
 
         y_windows = np.stack(
-            [target[c: c + pred_len] for c in cutoffs], axis=0
+            [target[c : c + pred_len] for c in cutoffs], axis=0
         )  # (n_cutoffs, H, 1)
 
         first_cut = min(cutoffs)
         X_train = [target[:first_cut]]
-        y_train = [target[first_cut: first_cut + pred_len]]
+        y_train = [target[first_cut : first_cut + pred_len]]
 
         covariates = Covariates(
             static_covars=[],
