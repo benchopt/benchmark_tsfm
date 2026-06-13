@@ -158,7 +158,6 @@ class Dataset(BaseDataset):
         y_train = [target[first_cut : first_cut + pred_len]]
 
         covariates = Covariates(
-            static_covars=[],
             hist_covars=[hist_covar],
             future_covars=[future_covar],
         )

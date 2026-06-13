@@ -1,11 +1,11 @@
 """Covariates payload passed to forecasting adapters.
 
-A small dataclass so the contract is typed and IDE-discoverable. All
-three fields default to empty sequences, so datasets without covariates
-can just pass ``Covariates()``.
+Each field is either ``None`` (that covariate kind is absent for every
+series) or a sequence with one entry per series. Datasets without
+covariates just pass ``Covariates()`` (all fields ``None``).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
@@ -15,38 +15,58 @@ import numpy as np
 class Covariates:
     """Per-series covariates aligned with the ``x`` sequence in ``predict``.
 
-    Each field is a sequence whose length equals ``len(x)``. Within a
-    series, the inner structure depends on the covariate kind — see the
-    forecasting predict() contract in :mod:`benchmark_utils.adapters.base`.
+    Each field is either ``None`` (absent for every series) or a sequence
+    whose length equals ``len(x)`` — one entry per series. The per-series
+    element shapes are listed below; see the forecasting predict() contract
+    in :mod:`benchmark_utils.adapters.base`.
 
     Parameters
     ----------
     static_covars
-        Shape is (channels,)
+        ``None``, or a length-``len(x)`` sequence of arrays of shape (channels,)
     hist_covars
-        Shape is (time, channels)
+        ``None``, or a length-``len(x)`` sequence of arrays of shape (time, channels)
     future_covars
-        Shape is (time, channels)
+        ``None``, or a length-``len(x)`` sequence of arrays of shape (time, channels)
     """
 
-    static_covars: Sequence[np.ndarray] = field(default_factory=list)
-    hist_covars: Sequence[np.ndarray] = field(default_factory=list)
-    future_covars: Sequence[np.ndarray] = field(default_factory=list)
+    static_covars: Sequence[np.ndarray] | None = None
+    hist_covars: Sequence[np.ndarray] | None = None
+    future_covars: Sequence[np.ndarray] | None = None
 
     def __post_init__(self):
-        if len(self.static_covars) != len(self.hist_covars) != len(self.future_covars):
+        # Every provided (non-None) field must cover the same set of series.
+        lengths = {
+            len(f)
+            for f in (self.static_covars, self.hist_covars, self.future_covars)
+            if f is not None
+        }
+        if len(lengths) > 1:
             raise ValueError(
-                "All covariate sequences must have the same length as x"
+                "All provided covariate sequences must have the same length"
             )
-    
-    def __len__(self) -> int:
-        # or hist_covars or future_covars, they all have the same length
-        return len(self.static_covars)
 
-    def slice(self, cutoff: int, horizon: int) -> 'Covariates':
-        """Get covariates for a single series."""
+    def __len__(self) -> int:
+        """Number of series covered (0 if no covariates are present)."""
+        for f in (self.static_covars, self.hist_covars, self.future_covars):
+            if f is not None:
+                return len(f)
+        return 0
+
+    def slice(self, series_idx: int, cutoff: int, horizon: int) -> 'Covariates':
+        """Covariates for a single ``(series, cutoff)`` window.
+
+        Selects series ``series_idx`` and slices its time axis: history up to
+        ``cutoff`` and the future window ``[cutoff, cutoff + horizon)``.
+        """
         return Covariates(
-            static_covars=self.static_covars,
-            hist_covars=self.hist_covars[:cutoff],
-            future_covars=self.future_covars[cutoff:cutoff + horizon],
+            static_covars=None
+            if self.static_covars is None
+            else [self.static_covars[series_idx]],
+            hist_covars=None
+            if self.hist_covars is None
+            else [self.hist_covars[series_idx][:cutoff]],
+            future_covars=None
+            if self.future_covars is None
+            else [self.future_covars[series_idx][cutoff:cutoff + horizon]],
         )

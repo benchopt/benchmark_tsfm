@@ -20,9 +20,9 @@ cutoff_indexes  : List[List[int]]                jagged: per-series cutoff
                                                   positions in X_test
 y_test          : List[np.ndarray (n_cutoffs, H, C)]
                                                   ground-truth windows
-covariates      : dict                           {static_covars, hist_covars,
-                                                  future_covars} — all empty for
-                                                  Monash today
+covariates      : Covariates                     {static_covars, hist_covars,
+                                                  future_covars} — all absent
+                                                  (None) for Monash today
 task            : "forecasting"
 metrics         : ["mae", "mse", "rmse", "mase", "smape",
                    "crps", "wql", "mcis", "pinball", "skill_score_ratio"]
