@@ -67,7 +67,14 @@ class Objective(BaseObjective):
 
     sampling_strategy = "run_once"
 
-    # Minimal config for ``benchopt test``
+    # Test dataset for ``benchopt test``. ``test_dataset_name`` is the only
+    # selector benchopt can read statically (via AST) when it builds the test
+    # env under ``skip_import_ctx`` without importing this module — ``test_config``
+    # is not a base-class attribute, so it is invisible there and resolution
+    # would otherwise fall back to the non-existent ``simulated`` dataset.
+    test_dataset_name = "monash"
+    # Richer config used once the objective is actually imported: exercise more
+    # datasets, all in debug mode for speed.
     test_config = {
         "dataset": {
             # Skipping MITDB for now due to timeout in download

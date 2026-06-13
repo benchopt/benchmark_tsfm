@@ -15,15 +15,15 @@ event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
 import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    balanced_accuracy_score,
-    f1_score,
-    roc_auc_score,
-)
 
 from benchmark_utils.outputs import ForecastOutput
+
+# NB: sklearn is imported lazily inside the classification / anomaly-detection
+# metrics below, so this module (and the registries at the bottom) can be
+# imported with only numpy installed. benchopt imports objective.py and the
+# dataset files just to read metadata in envs without the objective's
+# requirements; a top-level sklearn import would break that (and ``benchopt
+# test`` env setup). The metric functions only run when sklearn is present.
 
 # ---------------------------------------------------------------------------
 # Forecasting — internal helpers
@@ -172,14 +172,20 @@ def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
 
 
 def accuracy(y_true, y_pred):
+    from sklearn.metrics import accuracy_score
+
     return float(accuracy_score(y_true, y_pred))
 
 
 def balanced_accuracy(y_true, y_pred):
+    from sklearn.metrics import balanced_accuracy_score
+
     return float(balanced_accuracy_score(y_true, y_pred))
 
 
 def f1_weighted(y_true, y_pred):
+    from sklearn.metrics import f1_score
+
     return float(f1_score(y_true, y_pred, average="weighted", zero_division=0))
 
 
@@ -196,6 +202,8 @@ def auc_roc(y_true, y_score):
     y_true  : list of (T_j,) int arrays, concatenated
     y_score : list of (T_j,) float arrays, concatenated
     """
+    from sklearn.metrics import roc_auc_score
+
     y_true = np.concatenate([np.asarray(y) for y in y_true])
     y_score = np.concatenate([np.asarray(y) for y in y_score])
     if y_true.sum() == 0:
@@ -205,6 +213,8 @@ def auc_roc(y_true, y_score):
 
 def auc_pr(y_true, y_score):
     """Area under Precision-Recall curve."""
+    from sklearn.metrics import average_precision_score
+
     y_true = np.concatenate([np.asarray(y) for y in y_true])
     y_score = np.concatenate([np.asarray(y) for y in y_score])
     if y_true.sum() == 0:
@@ -224,6 +234,8 @@ def f1_pa(y_true, y_score, threshold=None):
         If None, the threshold is chosen to maximise F1 on the test set
         (oracle threshold — for benchmarking purposes only).
     """
+    from sklearn.metrics import f1_score
+
     y_true_cat = np.concatenate([np.asarray(y) for y in y_true])
     y_score_cat = np.concatenate([np.asarray(y) for y in y_score])
 
