@@ -3,3 +3,36 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F"]
+
+[tool.pyright]
+include = ["benchmark_utils", "datasets", "solvers", "objective.py"]
+typeCheckingMode = "basic"
+# Every benchopt Objective/Dataset/Solver overrides `name` (a base-class
+# property) with a string literal; the resulting reportAssignmentType is purely
+# structural, so mute it project-wide rather than annotating each class.
+reportAssignmentType = "none"
+
+# datasets/ and solvers/ are thin benchopt-subclass wrappers over untyped
+# libraries (tslearn, wfdb, torch, aeon, pandas). benchopt injects each class's
+# `parameters` dict as instance attributes and overrides `name` (a base
+# property) at runtime via a metaclass, none of which pyright can see. Scope the
+# resulting structural false positives to just these dirs; benchmark_utils/ and
+# objective.py (the real logic) stay fully strict. High-signal rules
+# (reportReturnType, reportRedeclaration, ...) stay on everywhere.
+[[tool.pyright.executionEnvironments]]
+root = "datasets"
+extraPaths = ["."]  # keep `benchmark_utils` importable from this root
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportOptionalMemberAccess = "none"
+reportCallIssue = "none"
+reportIndexIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "solvers"
+extraPaths = ["."]  # keep `benchmark_utils` importable from this root
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+reportOptionalMemberAccess = "none"
+reportCallIssue = "none"
+reportIndexIssue = "none"

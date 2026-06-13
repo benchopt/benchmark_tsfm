@@ -46,6 +46,8 @@ is a fitted :class:`~benchmark_utils.adapters.base.BaseTSFMAdapter`.
 See that module for per-task predict signatures.
 """
 
+from typing import Any
+
 import numpy as np
 from benchopt import BaseObjective
 
@@ -140,6 +142,9 @@ class Objective(BaseObjective):
         from benchmark_utils.inputs import ForecastInput
         from benchmark_utils.leakage import detect_forecast_leakage
 
+        # cutoff_indexes is Optional on the objective but always set for
+        # forecasting datasets.
+        assert self.cutoff_indexes is not None
         forecast_input = ForecastInput(
             x=self.X_test,
             cutoff_indexes=self.cutoff_indexes,
@@ -226,7 +231,7 @@ class Objective(BaseObjective):
                 self._task = task
                 self._meta = meta
 
-            def predict(self, x):
+            def predict(self, x: Any):  # union not narrowable by self._task
                 if self._task == "forecasting":
                     H = self._meta.get("prediction_length", 1)
                     qs = []

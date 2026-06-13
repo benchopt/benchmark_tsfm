@@ -57,7 +57,7 @@ class _MajorityClassifier(BaseTSFMAdapter):
         self._label = int(labels[np.argmax(counts)])
         return self
 
-    def predict(self, x: np.ndarray) -> int:
+    def predict(self, x: np.ndarray) -> list[int]:
         return [self._label] * len(x)
 
 
