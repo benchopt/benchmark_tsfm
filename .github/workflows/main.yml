@@ -37,3 +37,18 @@ jobs:
         # root on sys.path, so ``import benchmark_utils`` resolves to the real
         # package rather than the ``tests/benchmark_utils`` test directory.
         run: python -m pytest tests/test_leakage.py tests/test_objective_leakage.py -v
+  type_check:
+    runs-on: ubuntu-latest
+    # Non-blocking for now: model/solver deps aren't installed here, so
+    # missing-import noise is expected. Surfaces type regressions in
+    # benchmark_utils/ and objective.py without gating the build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install pyright numpy scikit-learn benchopt aeon
+      - name: Run pyright
+        run: pyright
