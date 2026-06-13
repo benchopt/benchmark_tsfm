@@ -56,7 +56,7 @@ class BaseTSFMSolver(BaseSolver):
 
     inference_batch_size
         Max number of (series, cutoff) windows sent to the model per
-        forecast_batch call. Subclasses may override to tune memory/throughput.
+        forward call. Subclasses may override this to tune memory/throughput.
     """
 
     supported_tasks: set[TaskType]
@@ -81,9 +81,10 @@ class BaseTSFMSolver(BaseSolver):
         # Initialize cached model state
         self._loaded_model = None
         self.model = None
-        # Max number of (series, cutoff) windows sent to the model per call.
-        # Subclasses may override to tune the memory/throughput trade-off.
+
+        # Possibly overridden by kwargs:
         self.inference_batch_size = 128
+
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -265,8 +266,7 @@ class BaseTSFMSolver(BaseSolver):
             return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
 
         # Run in batches so very large datasets do not go through the model
-        # as a single oversized batch. raw stays a flat list aligned with
-        # inputs, so the reconstruction below is unaffected.
+        # as a single oversized batch. Maintains ordering.
         raw: list[torch.Tensor] = []
         for start in range(0, len(inputs), self.inference_batch_size):
             end = start + self.inference_batch_size
