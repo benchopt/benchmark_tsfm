@@ -88,7 +88,9 @@ class _WindowedForecastAdapter(BaseTSFMAdapter):
         self.prediction_length = prediction_length
         self._head: Ridge | None = None
 
-    def fit(self, X_train: Sequence[np.ndarray], y_train: Any = None) -> "_WindowedForecastAdapter":
+    def fit(
+        self, X_train: Sequence[np.ndarray], y_train: Any = None
+    ) -> "_WindowedForecastAdapter":
         windows, targets = [], []
         for series in X_train:
             series = np.asarray(series, dtype=np.float32)
@@ -166,7 +168,9 @@ class _TimeEmbedEventAdapter(BaseTSFMAdapter):
         idx = np.round(np.linspace(0, T_prime - 1, T)).astype(int)
         return emb[idx]
 
-    def fit(self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]) -> "_TimeEmbedEventAdapter":
+    def fit(
+        self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]
+    ) -> "_TimeEmbedEventAdapter":
         series_list = [np.asarray(s, dtype=np.float32) for s in X_train]
         time_embs = self.solver.time_embed(series_list)  # list of (T'_i, D)
         embs_all, labels_all = [], []
@@ -206,7 +210,9 @@ class _WindowedEventAdapter(BaseTSFMAdapter):
         padded[self.window_size - 1:] = series
         return [padded[t: t + self.window_size] for t in range(T)]
 
-    def fit(self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]) -> "_WindowedEventAdapter":
+    def fit(
+        self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]
+    ) -> "_WindowedEventAdapter":
         all_windows, all_labels = [], []
         for series, labels in zip(X_train, y_train):
             series = np.asarray(series, dtype=np.float32)

@@ -63,7 +63,8 @@ class Solver(BaseTSFMSolver):
             X_in = tensor.numpy()
         if X_in.shape[-1] % 32 != 0:
             raise ValueError(
-                f"Sequence length must be divisible by 32 for Mantis, got {X_in.shape[-1]}"
+                "Sequence length must be divisible by 32 for Mantis, "
+                f"got {X_in.shape[-1]}"
             )
         return X_in
 
