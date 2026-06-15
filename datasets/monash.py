@@ -24,16 +24,17 @@ covariates      : dict                           {static_covars, hist_covars,
                                                   future_covars} — all empty for
                                                   Monash today
 task            : "forecasting"
-metrics         : ["mae", "mse", "mase", "smape"]
+metrics         : ["mae", "mse", "rmse", "mase", "smape",
+                   "crps", "wql", "mcis", "pinball", "skill_score_ratio"]
 prediction_length : int
 freq            : str  (e.g. "Y", "M", "D")
 seasonality     : int  (seasonal period used for MASE)
 """
 
 import numpy as np
+from aeon.datasets import load_forecasting
 from benchopt import BaseDataset
 
-from aeon.datasets import load_forecasting
 from benchmark_utils.covariates import Covariates
 from benchmark_utils.constants import from_aeon
 from benchmark_utils.windowing import make_forecasting_splits
@@ -81,7 +82,6 @@ class Dataset(BaseDataset):
         load_forecasting(self.dataset_name, return_metadata=False)
 
     def get_data(self):
-
         df, meta = load_forecasting(self.dataset_name, return_metadata=True)
         # df columns: series_name, start_timestamp, series_value
         # meta keys:  frequency, forecast_horizon,
@@ -101,9 +101,7 @@ class Dataset(BaseDataset):
             series_list.append(values.reshape(-1, 1))  # (T, 1) univariate
 
         if not series_list:
-            raise ValueError(
-                f"No series found for dataset {self.dataset_name!r}."
-            )
+            raise ValueError(f"No series found for dataset {self.dataset_name!r}.")
 
         # Training portion: everything except the last test windows
         test_len = pred_len * self.n_windows
@@ -113,13 +111,11 @@ class Dataset(BaseDataset):
                 continue
             train_end = max(1, ts.shape[0] - test_len)
             X_train.append(ts[:train_end])
-            y_train_list.append(ts[train_end: train_end + pred_len])
+            y_train_list.append(ts[train_end : train_end + pred_len])
             full_series.append(ts)
 
         if not full_series:
-            raise ValueError(
-                "All series are shorter than prediction_length."
-            )
+            raise ValueError("All series are shorter than prediction_length.")
 
         n_windows = 1 if self.debug else self.n_windows
         X_test, cutoff_indexes, y_test = make_forecasting_splits(
@@ -136,7 +132,18 @@ class Dataset(BaseDataset):
             cutoff_indexes=cutoff_indexes,
             covariates=Covariates(),
             task="forecasting",
-            metrics=["mae", "mse", "mase", "smape"],
+            metrics=[
+                "mae",
+                "mse",
+                "rmse",
+                "mase",
+                "smape",
+                "crps",
+                "wql",
+                "mcis",
+                "pinball",
+                "skill_score_ratio",
+            ],
             prediction_length=pred_len,
             freq=freq,
             seasonality=seasonality,

@@ -14,20 +14,22 @@ task    : "anomaly_detection"
 metrics : ["auc_roc", "auc_pr", "f1_pa"]
 """
 
-import numpy as np
-import pandas as pd
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from benchopt import BaseDataset
-from benchopt.config import get_data_path
-from benchmark_utils.download import fetch_tsb_uad
+
+from benchmark_utils.download import fetch_tsb_uad, load_data_tsb_uad
+from benchmark_utils.metrics import AD_METRICS
 
 
 def _load_records(db_path, record_ids, number):
     db_path = Path(db_path)
     if record_ids in (None, "all", ["all"]):
-        record_ids = [f.stem for f in db_path.glob("*.out")
-                      if f.stem != "MBA_ECG14046_data"]
+        record_ids = [
+            f.stem for f in db_path.glob("*.out") if f.stem != "MBA_ECG14046_data"
+        ]
     if number > 0:
         record_ids = record_ids[:number]
 
@@ -61,7 +63,7 @@ class Dataset(BaseDataset):
 
     name = "ECG"
 
-    requirements = ["pip::pooch", "pandas"]
+    requirements = ["pip::pooch", "tqdm"]
 
     parameters = {
         "record_ids": [
@@ -73,32 +75,17 @@ class Dataset(BaseDataset):
     }
 
     def get_data(self):
+        path = fetch_tsb_uad("ECG")
 
-        # Allow reuse of the download helper from benchmark_ad if present,
-        # otherwise fall back to the data path directly.
-        try:
-            path = fetch_tsb_uad("ECG")
-        except ImportError:
-            path = get_data_path("ECG")
+        X_train, X_test, y_test = load_data_tsb_uad(
+            path=path,
+            records_ids=self.record_ids,
+            train_ratio=self.train_ratio,
+            number=self.number,
+        )
 
-        record_ids = self.record_ids
-        X_raw, y_raw = _load_records(path, record_ids, self.number)
-
-        if not X_raw:
+        if not X_test:
             raise ValueError("No valid ECG records found.")
-
-        X_train, X_test, y_test = [], [], []
-        for x, y in zip(X_raw, y_raw):
-            if self.debug:
-                x = x[:5000]
-                y = y[:5000]
-
-            split = max(1, int(len(x) * self.train_ratio))
-
-            # Reshape to (T, C=1)
-            X_train.append(x[:split].reshape(-1, 1))
-            X_test.append(x[split:].reshape(-1, 1))
-            y_test.append(y[split:])
 
         return dict(
             X_train=X_train,
@@ -106,5 +93,5 @@ class Dataset(BaseDataset):
             X_test=X_test,
             y_test=y_test,
             task="anomaly_detection",
-            metrics=["auc_roc", "auc_pr", "f1_pa"],
+            metrics=AD_METRICS.keys(),
         )

@@ -1,14 +1,20 @@
 from .base import BaseTSFMAdapter
 from .encoder import (
-    UnpooledEncoder,
     BasePooler,
-    MeanPooler,
-    MaxPooler,
-    LastPooler,
     Encoder,
+    LastPooler,
+    MaxPooler,
+    MeanPooler,
+    UnpooledEncoder,
 )
-from .linear_probe import LinearProbeAdapter
 from .forecast_residual import ForecastResidualAdapter
+from .linear_probe import LinearProbeAdapter
+
+POOLERS = {
+    "mean": MeanPooler,
+    "max": MaxPooler,
+    "last": LastPooler,
+}
 
 __all__ = [
     "BaseTSFMAdapter",
