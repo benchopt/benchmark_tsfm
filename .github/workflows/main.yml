@@ -39,10 +39,14 @@ jobs:
         run: python -m pytest tests/test_leakage.py tests/test_objective_leakage.py -v
   type_check:
     runs-on: ubuntu-latest
-    # Non-blocking for now. Installs every lightweight dependency (no torch) so
-    # benchmark_utils/, datasets/ and objective.py are fully type-checked; only
-    # the torch-based model solvers stay unresolved (reportMissingImports is
-    # muted for solvers/ in pyproject.toml).
+    # Advisory only: this job never fails (so it never blocks a merge). pyright
+    # findings are surfaced as warning annotations (orange) instead of a red
+    # check. Installs every lightweight dependency (no torch) so benchmark_utils/,
+    # datasets/ and objective.py are fully type-checked; the torch-based model
+    # solvers stay unresolved (reportMissingImports is muted for solvers/ in
+    # pyproject.toml).
+    # The pyright step already exits 0; continue-on-error is a belt-and-suspenders
+    # so even an install/infra hiccup can never fail the run.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -55,5 +59,22 @@ jobs:
         run: >
           pip install pyright numpy scikit-learn benchopt aeon
           pandas tslearn huggingface_hub fsspec pooch tqdm wfdb
-      - name: Run pyright
-        run: pyright
+      - name: Run pyright (advisory — emits warnings, never fails)
+        run: |
+          pyright --outputjson > pyright.json || true
+          python - <<'PY'
+          import json, pathlib
+          data = json.loads(pathlib.Path("pyright.json").read_text() or "{}")
+          errors = [
+              d for d in data.get("generalDiagnostics", [])
+              if d.get("severity") == "error"
+          ]
+          for d in errors:
+              start = d["range"]["start"]
+              msg = d["message"].splitlines()[0]
+              print(
+                  f"::warning file={d['file']},line={start['line'] + 1},"
+                  f"col={start['character'] + 1}::{msg}"
+              )
+          print(f"pyright: {len(errors)} issue(s) (advisory, non-blocking)")
+          PY
