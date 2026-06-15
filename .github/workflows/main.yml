@@ -39,9 +39,10 @@ jobs:
         run: python -m pytest tests/test_leakage.py tests/test_objective_leakage.py -v
   type_check:
     runs-on: ubuntu-latest
-    # Non-blocking for now: model/solver deps aren't installed here, so
-    # missing-import noise is expected. Surfaces type regressions in
-    # benchmark_utils/ and objective.py without gating the build.
+    # Non-blocking for now. Installs every lightweight dependency (no torch) so
+    # benchmark_utils/, datasets/ and objective.py are fully type-checked; only
+    # the torch-based model solvers stay unresolved (reportMissingImports is
+    # muted for solvers/ in pyproject.toml).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +50,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install pyright numpy scikit-learn benchopt aeon
+        # Lightweight deps only — the model solvers' torch/chronos/momentfm/etc.
+        # are intentionally skipped to keep this job fast.
+        run: >
+          pip install pyright numpy scikit-learn benchopt aeon
+          pandas tslearn huggingface_hub fsspec pooch tqdm wfdb
       - name: Run pyright
         run: pyright

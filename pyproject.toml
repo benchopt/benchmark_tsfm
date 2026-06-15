@@ -36,3 +36,6 @@ reportArgumentType = "none"
 reportOptionalMemberAccess = "none"
 reportCallIssue = "none"
 reportIndexIssue = "none"
+# Model solvers import torch-based libs (chronos, momentfm, toto2, mantis) that
+# the lightweight type_check CI job does not install; their absence is expected.
+reportMissingImports = "none"
