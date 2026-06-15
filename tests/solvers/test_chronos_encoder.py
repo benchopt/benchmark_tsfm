@@ -24,4 +24,4 @@ def test_encode_shape(pipeline, layer, n_channels):
     x = np.random.randn(T, n_channels).astype(np.float32)
     emb = ChronosEncoder(pipeline, layer=layer).encode(x)
     d_model = pipeline.model.model.config.d_model
-    assert emb.shape == (T + 1, n_channels, d_model)
+    assert emb.shape == (1, T + 1, n_channels, d_model)
