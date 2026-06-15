@@ -6,6 +6,7 @@ from typing import Any, Literal, Sequence
 import numpy as np
 import torch
 from benchopt import BaseSolver
+from sklearn.linear_model import LogisticRegression, Ridge
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.adapters.forecast_residual import ForecastResidualAdapter
@@ -27,24 +28,23 @@ TaskType = Literal[
 class _SolverForecastAdapter(BaseTSFMAdapter):
     """Wraps BaseTSFMSolver.forecast() as a BaseTSFMAdapter."""
 
-    _DEFAULT_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
-
-    def __init__(self, solver, quantile_levels=None):
+    def __init__(self, solver: "BaseTSFMSolver") -> None:
         self.solver = solver
-        self.quantile_levels = quantile_levels or self._DEFAULT_QUANTILE_LEVELS
 
-    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+    def predict(
+        self, x: ForecastInput, prediction_length: int | None = None
+    ) -> ForecastOutput:
         horizon = prediction_length or self.solver.meta.get("prediction_length", 1)
-        return self.solver.forecast(x, horizon, self.quantile_levels)
+        return self.solver.forecast(x, horizon, self.solver.get_quantile_levels())
 
 
 class _SolverEmbedEncoder:
     """Wraps BaseTSFMSolver.embed() as a flat encoder for LinearProbeAdapter."""
 
-    def __init__(self, solver):
+    def __init__(self, solver: "BaseTSFMSolver") -> None:
         self.solver = solver
 
-    def encode(self, X) -> np.ndarray:
+    def encode(self, X: np.ndarray | list) -> np.ndarray:
         # X: list of (T_i, C) / (T_i,), or array (B, T, C) / (T, C) / (T,)
         if isinstance(X, list):
             return self.solver.embed(X)
@@ -57,10 +57,10 @@ class _SolverEmbedEncoder:
 class _SolverTimeEmbedPooledEncoder:
     """Wraps BaseTSFMSolver.time_embed() with mean pooling for LinearProbeAdapter."""
 
-    def __init__(self, solver):
+    def __init__(self, solver: "BaseTSFMSolver") -> None:
         self.solver = solver
 
-    def encode(self, X) -> np.ndarray:
+    def encode(self, X: np.ndarray | list) -> np.ndarray:
         # X: list of (T_i, C) / (T_i,), or array (B, T, C) / (T, C) / (T,)
         if isinstance(X, list):
             series_list = X
@@ -80,15 +80,15 @@ class _WindowedForecastAdapter(BaseTSFMAdapter):
     values. Always outputs a single quantile at 0.5 (point forecast).
     """
 
-    def __init__(self, solver, window_size: int, prediction_length: int):
+    def __init__(
+        self, solver: "BaseTSFMSolver", window_size: int, prediction_length: int
+    ) -> None:
         self.solver = solver
         self.window_size = window_size
         self.prediction_length = prediction_length
-        self._head = None
+        self._head: Ridge | None = None
 
-    def fit(self, X_train, y_train=None):
-        from sklearn.linear_model import Ridge
-
+    def fit(self, X_train: Sequence[np.ndarray], y_train: Any = None) -> "_WindowedForecastAdapter":
         windows, targets = [], []
         for series in X_train:
             series = np.asarray(series, dtype=np.float32)
@@ -105,7 +105,9 @@ class _WindowedForecastAdapter(BaseTSFMAdapter):
         self._head = Ridge().fit(embs, np.stack(targets))    # targets: (N, H*C)
         return self
 
-    def predict(self, x: ForecastInput, prediction_length=None) -> ForecastOutput:
+    def predict(
+        self, x: ForecastInput, prediction_length: int | None = None
+    ) -> ForecastOutput:
         # Ignore prediction_length override — trained for a fixed horizon.
         H = self.prediction_length
         windows, layout, per_series_shape = [], [], []
@@ -153,7 +155,7 @@ class _TimeEmbedEventAdapter(BaseTSFMAdapter):
     neighbour indexing before fitting and scoring.
     """
 
-    def __init__(self, solver):
+    def __init__(self, solver: "BaseTSFMSolver") -> None:
         self.solver = solver
 
     def _align(self, emb: np.ndarray, T: int) -> np.ndarray:
@@ -164,9 +166,7 @@ class _TimeEmbedEventAdapter(BaseTSFMAdapter):
         idx = np.round(np.linspace(0, T_prime - 1, T)).astype(int)
         return emb[idx]
 
-    def fit(self, X_train, y_train):
-        from sklearn.linear_model import LogisticRegression
-
+    def fit(self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]) -> "_TimeEmbedEventAdapter":
         series_list = [np.asarray(s, dtype=np.float32) for s in X_train]
         time_embs = self.solver.time_embed(series_list)  # list of (T'_i, D)
         embs_all, labels_all = [], []
@@ -195,7 +195,7 @@ class _WindowedEventAdapter(BaseTSFMAdapter):
     padded so that every timestep receives a score.
     """
 
-    def __init__(self, solver, window_size: int):
+    def __init__(self, solver: "BaseTSFMSolver", window_size: int) -> None:
         self.solver = solver
         self.window_size = window_size
 
@@ -206,9 +206,7 @@ class _WindowedEventAdapter(BaseTSFMAdapter):
         padded[self.window_size - 1:] = series
         return [padded[t: t + self.window_size] for t in range(T)]
 
-    def fit(self, X_train, y_train):
-        from sklearn.linear_model import LogisticRegression
-
+    def fit(self, X_train: Sequence[np.ndarray], y_train: Sequence[np.ndarray]) -> "_WindowedEventAdapter":
         all_windows, all_labels = [], []
         for series, labels in zip(X_train, y_train):
             series = np.asarray(series, dtype=np.float32)
@@ -291,14 +289,9 @@ class BaseTSFMSolver(BaseSolver):
     sampling_strategy = "run_once"
 
     def __init__(self, **kwargs: Any) -> None:
-        """Initialize solver with model-specific setup.
-
-        Subclasses can override this method to perform model-specific
-        initialization. If overriding, call super().__init__(**kwargs).
-        """
         super().__init__()
-        self._loaded_model_id = None
-        self.model = None
+        self._loaded_model_id: str | None = None
+        self.model: Any = None
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -310,13 +303,7 @@ class BaseTSFMSolver(BaseSolver):
     @property
     @abstractmethod
     def model_id(self) -> str:
-        """Return a unique string identifying the current model variant.
-
-        Used to cache the loaded model across set_objective calls. Should
-        encode all parameters that affect model loading (e.g. model size,
-        architecture variant). When model_id changes, load_model is called
-        again.
-        """
+        """A unique string identifying the current model variant."""
 
     @abstractmethod
     def load_model(self, device: str | torch.device, dtype: torch.dtype) -> Any:
@@ -338,7 +325,7 @@ class BaseTSFMSolver(BaseSolver):
             The loaded TSFM model
         """
 
-    def build_adapter(self, task: TaskType, model: Any) -> Any:
+    def build_adapter(self, task: TaskType, model: Any) -> BaseTSFMAdapter:
         """Create and optionally fit a task-specific adapter.
 
         Default strategies — the first capability the solver implements is used:
@@ -356,8 +343,10 @@ class BaseTSFMSolver(BaseSolver):
             1. time_embed_batch (per-position LogReg, via _TimeEmbedEventAdapter)
             2. embed_batch      (causal-windowed LogReg, via _WindowedEventAdapter)
 
-        Override this method if the model requires custom adapter logic
-        (e.g. specialised quantile computation, layer-specific embeddings).
+        Override this method if the model requires custom adapter logic.
+
+        # TODO: move this strategy documentation to a "how to add a model" docs
+        # page; also add a pointer from AGENTS.md for coding agents.
 
         Parameters
         ----------
@@ -374,73 +363,73 @@ class BaseTSFMSolver(BaseSolver):
         pred_len = self.meta.get("prediction_length", 1)
         window_size = getattr(self, "window_size", max(pred_len * 2, 64))
 
-        if task == "forecasting":
-            if self.can_forecast:
-                return _SolverForecastAdapter(self, self.get_quantile_levels())
-            if self.can_embed:
-                adapter = _WindowedForecastAdapter(self, window_size, pred_len)
-                adapter.fit(self.X_train)
-                return adapter
-            raise NotImplementedError(
-                f"{self.name} must implement forecast_batch or embed_batch "
-                "for task='forecasting'"
-            )
-
-        if task == "classification":
-            if self.can_embed:
-                encoder = _SolverEmbedEncoder(self)
-            elif self.can_time_embed:
-                encoder = _SolverTimeEmbedPooledEncoder(self)
-            else:
+        match task:
+            case "forecasting":
+                if self.can_forecast:
+                    return _SolverForecastAdapter(self)
+                if self.can_embed:
+                    adapter = _WindowedForecastAdapter(self, window_size, pred_len)
+                    adapter.fit(self.X_train)
+                    return adapter
                 raise NotImplementedError(
-                    f"{self.name} must implement embed_batch or time_embed_batch "
-                    "for task='classification'"
+                    f"{self.name} must implement forecast_batch or embed_batch "
+                    "for task='forecasting'"
                 )
-            adapter = LinearProbeAdapter(
-                encoder,
-                task="classification",
-                n_classes=self.meta.get("n_classes"),
-                classifier=getattr(self, "classifier", "log_reg"),
-                penalty=getattr(self, "penalty", "l2"),
-                C=getattr(self, "C", 1.0),
-                alpha=getattr(self, "alpha", 1.0),
-                n_estimators=getattr(self, "n_estimators", 100),
-            )
-            adapter.fit(self.X_train, self.y_train)
-            return adapter
 
-        if task == "anomaly_detection":
-            if self.can_embed:
-                encoder = _SolverEmbedEncoder(self)
-                adapter = LinearProbeAdapter(encoder, task="anomaly_detection")
-                adapter.fit(self.X_train, self.y_train)
-                return adapter
-            if self.can_forecast:
-                return ForecastResidualAdapter(
-                    _SolverForecastAdapter(self, self.get_quantile_levels())
+            case "classification":
+                if self.can_embed:
+                    encoder = _SolverEmbedEncoder(self)
+                elif self.can_time_embed:
+                    encoder = _SolverTimeEmbedPooledEncoder(self)
+                else:
+                    raise NotImplementedError(
+                        f"{self.name} must implement embed_batch or time_embed_batch "
+                        "for task='classification'"
+                    )
+                adapter = LinearProbeAdapter(
+                    encoder,
+                    task="classification",
+                    n_classes=self.meta.get("n_classes"),
+                    classifier=getattr(self, "classifier", "log_reg"),
+                    penalty=getattr(self, "penalty", "l2"),
+                    C=getattr(self, "C", 1.0),
+                    alpha=getattr(self, "alpha", 1.0),
+                    n_estimators=getattr(self, "n_estimators", 100),
                 )
-            raise NotImplementedError(
-                f"{self.name} must implement embed_batch or forecast_batch "
-                "for task='anomaly_detection'"
-            )
-
-        if task == "event_detection":
-            if self.can_time_embed:
-                adapter = _TimeEmbedEventAdapter(self)
                 adapter.fit(self.X_train, self.y_train)
                 return adapter
-            if self.can_embed:
-                adapter = _WindowedEventAdapter(self, window_size)
-                adapter.fit(self.X_train, self.y_train)
-                return adapter
-            raise NotImplementedError(
-                f"{self.name} must implement time_embed_batch or embed_batch "
-                "for task='event_detection'"
-            )
 
-        raise NotImplementedError(f"Unknown task: {task!r}")
+            case "anomaly_detection":
+                if self.can_embed:
+                    encoder = _SolverEmbedEncoder(self)
+                    adapter = LinearProbeAdapter(encoder, task="anomaly_detection")
+                    adapter.fit(self.X_train, self.y_train)
+                    return adapter
+                if self.can_forecast:
+                    return ForecastResidualAdapter(_SolverForecastAdapter(self))
+                raise NotImplementedError(
+                    f"{self.name} must implement embed_batch or forecast_batch "
+                    "for task='anomaly_detection'"
+                )
 
-    def skip(self, task: TaskType, **_) -> tuple[bool, str | None]:
+            case "event_detection":
+                if self.can_time_embed:
+                    adapter = _TimeEmbedEventAdapter(self)
+                    adapter.fit(self.X_train, self.y_train)
+                    return adapter
+                if self.can_embed:
+                    adapter = _WindowedEventAdapter(self, window_size)
+                    adapter.fit(self.X_train, self.y_train)
+                    return adapter
+                raise NotImplementedError(
+                    f"{self.name} must implement time_embed_batch or embed_batch "
+                    "for task='event_detection'"
+                )
+
+            case _:
+                raise NotImplementedError(f"Unknown task: {task!r}")
+
+    def skip(self, task: TaskType, **_: Any) -> tuple[bool, str | None]:
         """Skip unsupported tasks."""
         if task not in self.supported_tasks:
             return True, f"{self.name} solver does not support task={task!r}"
@@ -495,7 +484,7 @@ class BaseTSFMSolver(BaseSolver):
         return {"model": self._adapter}
 
     @property
-    def can_forecast(self):
+    def can_forecast(self) -> bool:
         # A model is supposed to have forecast capabilities iff
         # it overrides the `forecast_batch` method
         return type(self).forecast_batch is not BaseTSFMSolver.forecast_batch
@@ -503,10 +492,14 @@ class BaseTSFMSolver(BaseSolver):
     def get_quantile_levels(self) -> tuple[float, ...]:
         """Return the quantile levels to use for forecasting.
 
-        The default covers a standard set of 9 quantiles. Override to expose
-        the model's native quantile levels (e.g. ``tuple(pipeline.quantiles)``).
+        Must be overridden by subclasses that support forecasting. Implement
+        this to expose the model's native quantile levels
+        (e.g. ``tuple(pipeline.quantiles)``).
         """
-        return _SolverForecastAdapter._DEFAULT_QUANTILE_LEVELS
+        raise NotImplementedError(
+            f"{self.name} must implement get_quantile_levels() "
+            "to support forecasting"
+        )
 
     def forecast_batch(
         self,
@@ -596,7 +589,7 @@ class BaseTSFMSolver(BaseSolver):
         return ForecastOutput(quantiles=per_series, quantile_levels=quantile_levels)
 
     @property
-    def can_embed(self):
+    def can_embed(self) -> bool:
         # A model is supposed to have static embed capabilities iff
         # it overrides the `embed_batch` method
         return type(self).embed_batch is not BaseTSFMSolver.embed_batch
@@ -643,7 +636,7 @@ class BaseTSFMSolver(BaseSolver):
         return np.stack([r.float().cpu().numpy() for r in results], axis=0)
 
     @property
-    def can_time_embed(self):
+    def can_time_embed(self) -> bool:
         # A model is supposed to have temporal embed capabilities iff
         # it overrides the `time_embed_batch` method
         return type(self).time_embed_batch is not BaseTSFMSolver.time_embed_batch

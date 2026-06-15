@@ -1,9 +1,11 @@
 """Chronos-2 solver for the TSFM benchmark (local inference).
 
-Supports:
-  - forecasting       : zero-shot via Chronos2Pipeline.predict
-  - classification    : linear probe on pooled encoder embeddings
-  - anomaly_detection : forecast-residual on top of the same forecaster
+Directly supports:
+  - forecasting : zero-shot via ``Chronos2Pipeline.predict``
+
+Additionally provides:
+  - ``embed_batch``: pooled encoder embeddings for classification and
+    anomaly detection via the default adaptation strategies.
 
 Model loading is done in ``set_objective`` (untimed). Inference batches
 every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``

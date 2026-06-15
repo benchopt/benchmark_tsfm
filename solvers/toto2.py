@@ -1,9 +1,11 @@
 """Toto-2.0 solver for the TSFM benchmark (local inference).
 
-Supports:
-  - forecasting       : zero-shot via Toto2Model
-  - classification    : linear probe on pooled transformer patch embeddings
-  - anomaly_detection : forecast-residual on top of the same forecaster
+Directly supports:
+  - forecasting : zero-shot via ``Toto2Model.forecast``
+
+Additionally provides:
+  - ``embed_batch``: pooled transformer patch embeddings for classification
+    and anomaly detection via the default adaptation strategies.
 
 References:
     https://github.com/datadog/toto

@@ -1,12 +1,13 @@
 """Moment solver for the TSFM benchmark.
 
-Moment is a time series foundation model from Carnegie Mellon University.
-This solver supports:
-  - forecasting    : zero-shot via MOMENTPipeline
-  - classification : linear probe on pooled encoder embeddings
+Directly supports:
+  - forecasting : zero-shot point forecast via ``MOMENTPipeline.forecast``
 
-Model loading is done in ``set_objective`` (untimed). For forecasting,
-each (series, cutoff) pair is processed in a single forward pass.
+Additionally provides:
+  - ``embed_batch``: pooled patch embeddings for classification via the
+    default adaptation strategies.
+
+Model loading is done in ``set_objective`` (untimed).
 
 References:
     https://huggingface.co/AutonLab/MOMENT-1-large

@@ -1,8 +1,8 @@
 """Mantis solver for time series classification on UCR datasets.
 
-Uses the official ``mantis-tsfm`` API to load a pretrained Mantis checkpoint,
-extract embeddings with ``MantisTrainer.transform``, and train a classifier
-on top via the default linear-probe adapter.
+Additionally provides:
+  - ``embed_batch``: embeddings via ``MantisTrainer.transform`` for
+    classification via the default linear-probe adaptation strategy.
 
 References:
     https://huggingface.co/paris-noah/Mantis-8M
