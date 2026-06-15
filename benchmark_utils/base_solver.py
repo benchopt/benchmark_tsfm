@@ -55,11 +55,10 @@ class BaseTSFMSolver(BaseSolver):
         Default to bfloat16 on CUDA, float32 elsewhere.
     """
 
-    supported_tasks: set[TaskType]
     task: TaskType
 
     X_train: Sequence[np.ndarray]
-    y_train: Sequence[np.ndarray]
+    y_train: Sequence[np.ndarray] | None
     meta: dict[str, Any]
 
     model: Any
