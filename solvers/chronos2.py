@@ -18,6 +18,8 @@ References
     https://github.com/amazon-science/chronos-forecasting
 """
 
+import functools
+
 import numpy as np
 import torch
 from chronos.chronos2 import Chronos2Pipeline
@@ -66,7 +68,8 @@ class Solver(BaseTSFMSolver):
             dtype=dtype,
         )
 
-    def get_quantile_levels(self):
+    @functools.cached_property
+    def quantile_levels(self):
         return tuple(float(q) for q in self.model.quantiles)
 
     def forecast_batch(self, inputs, covariates, prediction_length):

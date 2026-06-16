@@ -70,7 +70,8 @@ class Solver(BaseTSFMSolver):
             dtype=dtype,
         )
 
-    def get_quantile_levels(self) -> tuple[float, ...]:
+    @property
+    def quantile_levels(self) -> tuple[float, ...]:
         return (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
     def forecast_batch(self, inputs, covariates, prediction_length):
@@ -100,7 +101,7 @@ class Solver(BaseTSFMSolver):
         samples = torch.cat(all_samples, dim=0).float().cpu().numpy()
         # samples: (total_univariate, num_samples, H)
 
-        q_levels = self.get_quantile_levels()
+        q_levels = self.quantile_levels
         q_arr = np.quantile(samples, q=list(q_levels), axis=1).transpose(1, 0, 2)
         # q_arr: (total_univariate, Q, H)
 

@@ -35,7 +35,7 @@ class _SolverForecastAdapter(BaseTSFMAdapter):
         self, x: ForecastInput, prediction_length: int | None = None
     ) -> ForecastOutput:
         horizon = prediction_length or self.solver.meta.get("prediction_length", 1)
-        return self.solver.forecast(x, horizon, self.solver.get_quantile_levels())
+        return self.solver.forecast(x, horizon, self.solver.quantile_levels)
 
 
 class _SolverEmbedEncoder:
@@ -493,15 +493,18 @@ class BaseTSFMSolver(BaseSolver):
         # it overrides the `forecast_batch` method
         return type(self).forecast_batch is not BaseTSFMSolver.forecast_batch
 
-    def get_quantile_levels(self) -> tuple[float, ...]:
-        """Return the quantile levels to use for forecasting.
+    @property
+    def quantile_levels(self) -> tuple[float, ...]:
+        """The quantile levels to use for forecasting.
 
         Must be overridden by subclasses that support forecasting. Implement
         this to expose the model's native quantile levels
-        (e.g. ``tuple(pipeline.quantiles)``).
+        (e.g. ``tuple(pipeline.quantiles)``). If looking this up is
+        expensive (e.g. it requires the loaded model), override as a
+        ``functools.cached_property`` instead.
         """
         raise NotImplementedError(
-            f"{self.name} must implement get_quantile_levels() "
+            f"{self.name} must implement quantile_levels "
             "to support forecasting"
         )
 

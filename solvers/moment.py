@@ -64,7 +64,8 @@ class Solver(BaseTSFMSolver):
         )
         return pipeline.to(device)
 
-    def get_quantile_levels(self):
+    @property
+    def quantile_levels(self):
         return (0.5,)  # Moment outputs point forecasts only
 
     def forecast_batch(self, inputs, covariates, prediction_length):

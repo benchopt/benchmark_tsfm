@@ -61,7 +61,8 @@ class Solver(BaseTSFMSolver):
         model = Toto2Model.from_pretrained(self.checkpoint)
         return model.to(device).eval()
 
-    def get_quantile_levels(self) -> tuple[float, ...]:
+    @property
+    def quantile_levels(self) -> tuple[float, ...]:
         return tuple(float(q) / 10 for q in range(1, 10))
 
     def forecast_batch(self, inputs, covariates, prediction_length):
