@@ -574,7 +574,9 @@ class BaseTSFMSolver(BaseSolver):
             for cutoff_idx, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]  # (T_cutoff, C)
                 inputs.append(torch.from_numpy(hist))
-                covariates.append(x.covariates.slice(cutoff, prediction_length))
+                covariates.append(
+                    x.covariates.slice(series_idx, cutoff, prediction_length)
+                )
                 layout.append((series_idx, cutoff_idx))
 
         if not inputs:
