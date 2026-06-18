@@ -36,29 +36,8 @@ from aeon.datasets import load_forecasting
 from benchopt import BaseDataset
 
 from benchmark_utils.covariates import Covariates
+from benchmark_utils.constants import from_aeon
 from benchmark_utils.windowing import make_forecasting_splits
-
-# Map aeon frequency strings → pandas-style freq codes and MASE seasonality
-_FREQ_MAP = {
-    "yearly": ("Y", 1),
-    "quarterly": ("Q", 4),
-    "monthly": ("M", 12),
-    "weekly": ("W", 52),
-    "daily": ("D", 7),
-    "hourly": ("H", 24),
-    "minutely": ("T", 1440),
-    "seconds": ("S", 1),
-}
-
-_DEFAULT_HORIZON = {
-    "Y": 6,
-    "Q": 8,
-    "M": 12,
-    "W": 13,
-    "D": 14,
-    "H": 24,
-    "T": 60,
-}
 
 
 class Dataset(BaseDataset):
@@ -88,6 +67,20 @@ class Dataset(BaseDataset):
         "debug": [False],
     }
 
+    # Only dataset_name decides what aeon downloads; the other knobs
+    # affect the in-memory split, not the file on disk.
+    prepare_cache_ignore = ("prediction_length", "n_windows", "debug")
+
+    def prepare(self):
+        """Warm aeon's local cache for this dataset (download if missing).
+
+        aeon writes the ``.tsf`` to
+        ``~/.aeon/datasets/local_data/<name>/<name>.tsf`` on first use;
+        we call it once and discard the parsed result so the cache layer
+        in :func:`load_forecasting` handles the actual download.
+        """
+        load_forecasting(self.dataset_name, return_metadata=False)
+
     def get_data(self):
         df, meta = load_forecasting(self.dataset_name, return_metadata=True)
         # df columns: series_name, start_timestamp, series_value
@@ -95,13 +88,11 @@ class Dataset(BaseDataset):
         #             contain_missing_values, contain_equal_length
 
         aeon_freq = meta.get("frequency", "yearly")
-        freq, seasonality = _FREQ_MAP.get(aeon_freq, ("D", 1))
+        freq, seasonality, default_h = from_aeon(aeon_freq)
 
         pred_len = self.prediction_length
         if pred_len is None:
-            pred_len = int(
-                meta.get("forecast_horizon") or _DEFAULT_HORIZON.get(freq, 10)
-            )
+            pred_len = int(meta.get("forecast_horizon") or default_h)
 
         series_list = []
         rows = df.iterrows() if not self.debug else list(df.iterrows())[:5]
