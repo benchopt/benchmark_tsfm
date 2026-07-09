@@ -36,29 +36,8 @@ from aeon.datasets import load_forecasting
 from benchopt import BaseDataset
 
 from benchmark_utils.covariates import Covariates
-from benchmark_utils.windowing import make_forecasting_splits
-
-# Map aeon frequency strings → pandas-style freq codes and MASE seasonality
-_FREQ_MAP = {
-    "yearly": ("Y", 1),
-    "quarterly": ("Q", 4),
-    "monthly": ("M", 12),
-    "weekly": ("W", 52),
-    "daily": ("D", 7),
-    "hourly": ("H", 24),
-    "minutely": ("T", 1440),
-    "seconds": ("S", 1),
-}
-
-_DEFAULT_HORIZON = {
-    "Y": 6,
-    "Q": 8,
-    "M": 12,
-    "W": 13,
-    "D": 14,
-    "H": 24,
-    "T": 60,
-}
+from benchmark_utils.forecasting_constants import FORECASTING_METRICS, from_aeon
+from benchmark_utils.windowing import build_forecasting_data
 
 
 class Dataset(BaseDataset):
@@ -88,6 +67,20 @@ class Dataset(BaseDataset):
         "debug": [False],
     }
 
+    # Only dataset_name decides what aeon downloads; the other knobs
+    # affect the in-memory split, not the file on disk.
+    prepare_cache_ignore = ("prediction_length", "n_windows", "debug")
+
+    def prepare(self):
+        """Warm aeon's local cache for this dataset (download if missing).
+
+        aeon writes the ``.tsf`` to
+        ``~/.aeon/datasets/local_data/<name>/<name>.tsf`` on first use;
+        we call it once and discard the parsed result so the cache layer
+        in :func:`load_forecasting` handles the actual download.
+        """
+        load_forecasting(self.dataset_name, return_metadata=False)
+
     def get_data(self):
         df, meta = load_forecasting(self.dataset_name, return_metadata=True)
         # df columns: series_name, start_timestamp, series_value
@@ -95,13 +88,11 @@ class Dataset(BaseDataset):
         #             contain_missing_values, contain_equal_length
 
         aeon_freq = meta.get("frequency", "yearly")
-        freq, seasonality = _FREQ_MAP.get(aeon_freq, ("D", 1))
+        freq, seasonality, default_h = from_aeon(aeon_freq)
 
         pred_len = self.prediction_length
         if pred_len is None:
-            pred_len = int(
-                meta.get("forecast_horizon") or _DEFAULT_HORIZON.get(freq, 10)
-            )
+            pred_len = int(meta.get("forecast_horizon") or default_h)
 
         series_list = []
         rows = df.iterrows() if not self.debug else list(df.iterrows())[:5]
@@ -112,47 +103,16 @@ class Dataset(BaseDataset):
         if not series_list:
             raise ValueError(f"No series found for dataset {self.dataset_name!r}.")
 
-        # Training portion: everything except the last test windows
-        test_len = pred_len * self.n_windows
-        X_train, y_train_list, full_series = [], [], []
-        for ts in series_list:
-            if ts.shape[0] < pred_len + 1:
-                continue
-            train_end = max(1, ts.shape[0] - test_len)
-            X_train.append(ts[:train_end])
-            y_train_list.append(ts[train_end : train_end + pred_len])
-            full_series.append(ts)
-
-        if not full_series:
-            raise ValueError("All series are shorter than prediction_length.")
-
-        n_windows = 1 if self.debug else self.n_windows
-        X_test, cutoff_indexes, y_test = make_forecasting_splits(
-            full_series,
-            prediction_length=pred_len,
-            n_windows=n_windows,
-        )
-
         return dict(
-            X_train=X_train,
-            y_train=y_train_list,
-            X_test=X_test,
-            y_test=y_test,
-            cutoff_indexes=cutoff_indexes,
+            **build_forecasting_data(
+                series_list,
+                prediction_length=pred_len,
+                n_windows=self.n_windows,
+                debug=self.debug,
+            ),
             covariates=Covariates(),
             task="forecasting",
-            metrics=[
-                "mae",
-                "mse",
-                "rmse",
-                "mase",
-                "smape",
-                "crps",
-                "wql",
-                "mcis",
-                "pinball",
-                "skill_score_ratio",
-            ],
+            metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
             freq=freq,
             seasonality=seasonality,

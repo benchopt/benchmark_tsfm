@@ -35,18 +35,16 @@ class Covariates:
 
     def __post_init__(self):
         if len(self.static_covars) != len(self.hist_covars) != len(self.future_covars):
-            raise ValueError(
-                "All covariate sequences must have the same length as x"
-            )
-    
+            raise ValueError("All covariate sequences must have the same length as x")
+
     def __len__(self) -> int:
         # or hist_covars or future_covars, they all have the same length
         return len(self.static_covars)
 
-    def slice(self, cutoff: int, horizon: int) -> 'Covariates':
+    def slice(self, cutoff: int, horizon: int) -> "Covariates":
         """Get covariates for a single series."""
         return Covariates(
             static_covars=self.static_covars,
             hist_covars=self.hist_covars[:cutoff],
-            future_covars=self.future_covars[cutoff:cutoff + horizon],
+            future_covars=self.future_covars[cutoff : cutoff + horizon],
         )

@@ -58,8 +58,28 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         self.n_estimators = n_estimators
         self._label_enc = LabelEncoder()
 
+    @staticmethod
+    def _require_finite(emb):
+        """Fail loudly if the encoder produced non-finite embeddings.
+
+        Some foundation models emit NaN/Inf features when they fail numerically
+        on the current hardware (e.g. Chronos-2's encoder on CPU). Rather than
+        let the benchmark fit on invalid features and record fabricated metrics,
+        raise a clear error that names the real cause instead of the opaque
+        downstream sklearn ``Input X contains NaN``.
+        """
+        if not np.isfinite(emb).all():
+            n_bad = int((~np.isfinite(emb)).sum())
+            raise ValueError(
+                f"Encoder produced non-finite embeddings: {n_bad}/{emb.size} "
+                "values are NaN/Inf. This usually means the model failed "
+                "numerically on this hardware (e.g. Chronos-2 on CPU). Refusing "
+                "to fit the linear head on invalid features."
+            )
+        return emb
+
     def fit(self, X_train, y_train, **kwargs):
-        embeddings = self.encoder.encode(X_train)
+        embeddings = self._require_finite(self.encoder.encode(X_train))
 
         if self.task == "classification":
             y_enc = self._label_enc.fit_transform(y_train)
@@ -107,7 +127,7 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        emb = self.encoder.encode(X)
+        emb = self._require_finite(self.encoder.encode(X))
 
         if self.task == "classification":
             label_enc = self._head.predict(emb)

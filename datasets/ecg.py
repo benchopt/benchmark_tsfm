@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from benchopt import BaseDataset
 
-from benchmark_utils.download import fetch_tsb_uad, load_data_tsb_uad
+from benchmark_utils.download_pooch import fetch_tsb_uad, load_data_tsb_uad
 from benchmark_utils.metrics import AD_METRICS
 
 
@@ -93,5 +93,5 @@ class Dataset(BaseDataset):
             X_test=X_test,
             y_test=y_test,
             task="anomaly_detection",
-            metrics=AD_METRICS.keys(),
+            metrics=list(AD_METRICS.keys()),
         )
