@@ -18,7 +18,9 @@ All datasets must return (via ``get_data``):
 
 Task-specific shapes
 --------------------
-forecasting        X_test         List[(T_i, C)]  full series — adapter uses
+forecasting        y_train        None — solvers carve fine-tuning
+                                  windows out of X_train themselves
+                   X_test         List[(T_i, C)]  full series — adapter uses
                                                   ``x[:cutoff]`` as history
                    cutoff_indexes List[List[int]] jagged per-series cutoffs
                    y_test         List[(n_cutoffs, H, C)]
@@ -70,9 +72,12 @@ class Objective(BaseObjective):
     # Minimal config for ``benchopt test``
     test_config = {
         "dataset": {
-            # Skipping MITDB for now due to timeout in download
             "name": [
-                "monash", "ucr", "yahoo",  # "mitdb",
+                "monash",
+                "ucr",
+                "yahoo",
+                "mitdb",
+                "dummy-classification",
             ],
             "debug": True,
         }
@@ -106,6 +111,20 @@ class Objective(BaseObjective):
         self.metrics = metrics
         self.meta = meta  # freq, prediction_length, n_classes, …
 
+    def skip(self, **data):
+        """Honor a ``_skip_reason`` field set by the dataset.
+
+        Datasets that want to filter their own parameter grid (e.g.
+        :mod:`datasets.gifteval` skipping non-leaderboard (path, term)
+        combos) return ``dict(_skip_reason="...")`` from ``get_data()``.
+        benchopt calls this hook *before* ``set_data`` and returns early
+        on skip, so no other data field is needed or consumed.
+        """
+        reason = data.get("_skip_reason")
+        if reason:
+            return True, reason
+        return False, None
+
     # ------------------------------------------------------------------
     # Passed to the solver
     # ------------------------------------------------------------------
@@ -123,16 +142,17 @@ class Objective(BaseObjective):
     # ------------------------------------------------------------------
 
     def evaluate_result(self, model):
-        if self.task == "forecasting":
-            return self._eval_forecasting(model)
-        elif self.task == "classification":
-            return self._eval_classification(model)
-        elif self.task == "anomaly_detection":
-            return self._eval_anomaly_detection(model)
-        elif self.task == "event_detection":
-            return self._eval_event_detection(model)
-        else:
-            raise ValueError(f"Unknown task: {self.task!r}")
+        match self.task:
+            case "forecasting":
+                return self._eval_forecasting(model)
+            case "classification":
+                return self._eval_classification(model)
+            case "anomaly_detection":
+                return self._eval_anomaly_detection(model)
+            case "event_detection":
+                return self._eval_event_detection(model)
+            case _:
+                raise ValueError(f"Unknown task: {self.task!r}")
 
     # --- forecasting ---------------------------------------------------
 

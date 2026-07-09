@@ -53,7 +53,7 @@ class Covariates:
                 return len(f)
         return 0
 
-    def slice(self, series_idx: int, cutoff: int, horizon: int) -> 'Covariates':
+    def slice(self, series_idx: int, cutoff: int, horizon: int) -> "Covariates":
         """Covariates for a single ``(series, cutoff)`` window.
 
         Selects series ``series_idx`` and slices its time axis: history up to
@@ -68,5 +68,5 @@ class Covariates:
             else [self.hist_covars[series_idx][:cutoff]],
             future_covars=None
             if self.future_covars is None
-            else [self.future_covars[series_idx][cutoff:cutoff + horizon]],
+            else [self.future_covars[series_idx][cutoff : cutoff + horizon]],
         )
