@@ -105,6 +105,6 @@ class Encoder:
         ``(B, T, V) -> (B, V * D)``. A single ``(T, V)`` sample is
         promoted by the underlying encoder to ``B=1``.
         """
-        embeddings = self.base_encoder.encode(X)   # (B, T, V, D)
-        pooled = self.pooler.pool(embeddings)      # (B, V, D)
+        embeddings = self.base_encoder.encode(X)  # (B, T, V, D)
+        pooled = self.pooler.pool(embeddings)  # (B, V, D)
         return pooled.reshape(pooled.shape[0], -1)  # (B, V * D)

@@ -28,8 +28,13 @@ class LinearProbeAdapter(BaseTSFMAdapter):
     encoder : object with ``encode(x: np.ndarray (T, C)) -> np.ndarray (D,)``
     task : {"classification", "anomaly_detection"}
     n_classes : int, required when task == "classification"
-    max_iter : int
-        Maximum iterations for the logistic regression solver.
+    penalty: str
+        Regularization type for logistic regression.
+        Options are "l1", "l2" and "elasticnet".
+    C: float
+        Regularization strength for the logistic regression.
+    alpha: float
+        Regularization strength for the ridge classifier.
     """
 
     def __init__(
@@ -37,9 +42,10 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         encoder,
         task="classification",
         n_classes=None,
-        classifier="logistic_regression",
+        classifier="log_reg",
         penalty="l2",
-        max_iter=1000,
+        C=1.0,
+        alpha=1.0,
         n_estimators=100,
     ):
         self.encoder = encoder
@@ -47,31 +53,53 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         self.n_classes = n_classes
         self.classifier = classifier
         self.penalty = penalty
-        self.max_iter = max_iter
+        self.C = C
+        self.alpha = (alpha,)
         self.n_estimators = n_estimators
         self._label_enc = LabelEncoder()
 
+    @staticmethod
+    def _require_finite(emb):
+        """Fail loudly if the encoder produced non-finite embeddings.
+
+        Some foundation models emit NaN/Inf features when they fail numerically
+        on the current hardware (e.g. Chronos-2's encoder on CPU). Rather than
+        let the benchmark fit on invalid features and record fabricated metrics,
+        raise a clear error that names the real cause instead of the opaque
+        downstream sklearn ``Input X contains NaN``.
+        """
+        if not np.isfinite(emb).all():
+            n_bad = int((~np.isfinite(emb)).sum())
+            raise ValueError(
+                f"Encoder produced non-finite embeddings: {n_bad}/{emb.size} "
+                "values are NaN/Inf. This usually means the model failed "
+                "numerically on this hardware (e.g. Chronos-2 on CPU). Refusing "
+                "to fit the linear head on invalid features."
+            )
+        return emb
+
     def fit(self, X_train, y_train, **kwargs):
-        embeddings = self.encoder.encode(X_train)
+        embeddings = self._require_finite(self.encoder.encode(X_train))
 
         if self.task == "classification":
             y_enc = self._label_enc.fit_transform(y_train)
 
             # Define classifier
             match self.classifier.lower():
-                case "logistic_regression":
+                case "log_reg":
                     self._head = make_pipeline(
                         StandardScaler(),
                         LogisticRegression(
                             penalty=self.penalty,
-                            max_iter=self.max_iter,
+                            C=self.C,
+                            random_state=42,
                         ),
                     )
-                case "ridge_regression":
+                case "ridge_clf":
                     self._head = make_pipeline(
                         StandardScaler(),
                         RidgeClassifier(
-                            max_iter=self.max_iter,
+                            alpha=self.alpha,
                             random_state=42,
                         ),
                     )
@@ -84,7 +112,8 @@ class LinearProbeAdapter(BaseTSFMAdapter):
                     )
                 case "_":
                     raise ValueError(
-                        f"Unknown classifier '{self.classifier}'. Choose between 'logistic_regression', 'ridge_regression', and 'random_forest'."
+                        f"Unknown classifier '{self.classifier}'."
+                        f"Options are 'log_reg', 'ridge_clf', and 'random_forest'."
                     )
             self._head.fit(embeddings, y_enc)
 
@@ -98,7 +127,7 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        emb = self.encoder.encode(X)
+        emb = self._require_finite(self.encoder.encode(X))
 
         if self.task == "classification":
             label_enc = self._head.predict(emb)

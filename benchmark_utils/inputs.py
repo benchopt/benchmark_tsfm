@@ -26,10 +26,24 @@ class ForecastInput:
     cutoff_indexes : sequence of sequence of int
         Jagged — per-series timestep indexes at which a forecast starts.
     covariates : Covariates
-        Static / historical / future covariates aligned with ``x``.
-        Defaults to empty.
+        Static / historical / future covariates aligned with ``x``. Each
+        covariate field is either ``None`` (absent for every series) or has
+        one entry per series (length ``len(x)``). Defaults to all-``None``.
     """
 
     x: Sequence[np.ndarray]
     cutoff_indexes: Sequence[Sequence[int]]
     covariates: Covariates = field(default_factory=Covariates)
+
+    def __post_init__(self):
+        if len(self.x) != len(self.cutoff_indexes):
+            raise ValueError("x and cutoff_indexes must have the same length")
+        # Covariates either cover all series (one entry each) or are absent.
+        # len(covariates) is the shared per-field length (0 when absent), so
+        # covariate-free inputs need no boilerplate.
+        n_cov = len(self.covariates)
+        if n_cov not in (0, len(self.x)):
+            raise ValueError(
+                f"covariates must cover every series: got length {n_cov}, "
+                f"expected 0 (absent) or len(x)={len(self.x)}"
+            )

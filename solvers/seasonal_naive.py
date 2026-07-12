@@ -17,7 +17,6 @@ from benchmark_utils.adapters.base import BaseTSFMAdapter
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
 
-
 SUPPORTED_TASKS = {"forecasting"}
 
 
@@ -35,14 +34,16 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
         for series, cutoffs in zip(x.x, x.cutoff_indexes):
             series = np.asarray(series)
             C = series.shape[1] if series.ndim == 2 else 1
-            preds = np.empty((len(cutoffs), self.prediction_length, C), dtype=np.float32)
+            preds = np.empty(
+                (len(cutoffs), self.prediction_length, C), dtype=np.float32
+            )
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
                 season = min(self.season_length, hist.shape[0])
                 pattern = hist[-season:]
                 reps = int(np.ceil(self.prediction_length / season))
-                preds[k] = np.tile(pattern, (reps, 1))[:self.prediction_length]
-            quantiles.append(preds[:, None, :, :])
+                preds[k] = np.tile(pattern, (reps, 1))[: self.prediction_length]
+            quantiles.append(preds[:, :, :, None])  # (n_cutoffs, H, C, 1)
         return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
 
@@ -61,8 +62,6 @@ class Solver(BaseSolver):
     name = "SeasonalNaive"
 
     requirements = []
-
-    sampling_strategy = "run_once"
 
     parameters = {
         "season_length": [1, 7, 12, 24],
