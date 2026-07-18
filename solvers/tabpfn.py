@@ -1,9 +1,15 @@
-"""TabPFN-v2 solver for UCR/UEA classification.
+"""TabPFN-v2 solver for UCR/UEA classification and forecasting.
 
 TabPFN is a Prior-fitted Network (PFN) — a Transformer pre-trained over
-synthetic tabular datasets via meta-learning. For the UCR/UEA scope each
-``(T, C)`` time-series sample is reshaped into a flat ``(T*C,)`` feature row
-and the full training matrix is passed to ``TabPFNClassifier``.
+synthetic tabular datasets via meta-learning. Each ``(T, C)`` time-series
+sample is flattened to a ``(T*C,)`` feature row and the whole training matrix
+is passed to ``TabPFNClassifier``. The model *is* the classifier, so the
+default embedding + linear-probe classification strategy does not apply and
+``build_adapter`` is overridden to fit it directly.
+
+For forecasting there is no first-party TabPFN pipeline, so we reuse tabicl's
+forecasting transforms/preprocessing and swap in ``TabPFNRegressor`` (see
+:mod:`benchmark_utils.tabular_forecast`). This adds a ``tabicl`` requirement.
 
 References:
     https://github.com/PriorLabs/TabPFN
@@ -11,12 +17,24 @@ References:
 """
 
 import numpy as np
-from benchopt import BaseSolver
-
+import torch
 from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 
-SUPPORTED_TASKS = {"classification"}
+from benchmark_utils.base_solver import BaseTSFMSolver
+from benchmark_utils.tabular_forecast import (
+    DEFAULT_FORECAST_QUANTILES,
+    build_forecaster,
+    forecast_windows,
+)
+
+
+def _to_tabular(X):
+    """Flatten a list of ``(T, C)`` samples into an ``(N, T*C)`` matrix."""
+    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
+    if arr.ndim == 3:
+        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
+    return arr
 
 
 class _TabPFNAdapter:
@@ -34,94 +52,74 @@ class _TabPFNAdapter:
         return self.model.predict(_to_tabular(X))
 
 
-def _to_tabular(X):
-    """Convert a list of benchmark samples into a 2-D feature matrix.
-
-    Parameters
-    ----------
-    X : list of np.ndarray, each shape (T, C)
-        UCR/UEA samples.  ``C`` is 1 for univariate datasets.
-
-    Returns
-    -------
-    np.ndarray, shape (N, T * C)
-        Flat tabular matrix ready for TabPFN.
-    """
-    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
-    if arr.ndim == 3:
-        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
-    return arr
-
-
-class Solver(BaseSolver):
-    """TabPFN-v2 in-context learning solver for UCR/UEA classification.
-
-    The classifier is instantiated once in ``set_objective`` (not timed) so
-    that any checkpoint download is excluded from benchmark timing. The
-    actual ``fit`` — which stores the training context — runs in ``run``.
-    """
+class Solver(BaseTSFMSolver):
+    """TabPFN-v2 in-context learning solver for UCR/UEA classification."""
 
     name = "TabPFN-v2"
 
-    requirements = ["pip::tabpfn"]
+    # tabicl provides the forecasting transforms reused for TabPFN forecasting.
+    requirements = ["pip::tabpfn", "pip::tabicl"]
 
-    sampling_strategy = "run_once"
+    # Forecasting knobs (fixed, not part of the benchmark grid). A short
+    # context + tiny regressor ensemble keep per-series fitting tractable;
+    # the temporal features already encode seasonality, so a long raw
+    # history adds little.
+    max_context_length = 512
+    forecast_n_estimators = 2
+    point_estimate = "mean"
+    # Push all of a dataset's series through the forecaster in one batch so the
+    # GPU worker pool (and checkpoint load) is spun up once, not per 128 windows.
+    forecast_inference_batch_size = 4096
 
     parameters = {
         "n_estimators": [8],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"TabPFN solver does not support task={task!r}"
-        return False, None
+    @property
+    def supported_tasks(self):
+        return {"classification", "forecasting"}
 
-    def set_objective(self, task, X_train, y_train, **meta):
-        """Prepare the solver for a given dataset configuration.
+    @property
+    def quantile_levels(self):
+        return DEFAULT_FORECAST_QUANTILES
 
-        Classifier instantiation is done here (not inside ``run``) so that
-        the checkpoint download/init time is excluded from benchmark timing.
-        """
-        self.task = task
-        self.X_train = X_train
-        self.y_train = y_train
-        self.meta = meta
+    @property
+    def model_id(self):
+        return f"{self.task}:tabpfn-v2:{self.n_estimators}"
 
-        # Reinstantiate only when n_estimators changes.
-        should_reload = (
-            not hasattr(self, "_classifier")
-            or not hasattr(self, "_loaded_n_estimators")
-            or self._loaded_n_estimators != self.n_estimators
+    def load_model(self, device, dtype):
+        # For forecasting the "model" is the (tabicl-transforms + TabPFN)
+        # pipeline; the regressor itself loads lazily inside forecast_batch.
+        if self.task == "forecasting":
+            self.inference_batch_size = self.forecast_inference_batch_size
+            return build_forecaster(
+                "tabpfn",
+                max_context_length=self.max_context_length,
+                point_estimate=self.point_estimate,
+                config={"n_estimators": self.forecast_n_estimators},
+            )
+        # Classifier instantiation (and checkpoint download) is untimed.
+        # TabPFN handles device placement itself via device="auto".
+        return TabPFNClassifier.create_default_for_version(
+            ModelVersion.V2,
+            n_estimators=self.n_estimators,
+            device="auto",
+            random_state=42,
+            ignore_pretraining_limits=True,
         )
-        if should_reload:
-            try:
-                self._classifier = TabPFNClassifier.create_default_for_version(
-                    ModelVersion.V2,
-                    n_estimators=self.n_estimators,
-                    device="auto",
-                    random_state=42,
-                    ignore_pretraining_limits=True,
-                )
-                self._loaded_n_estimators = self.n_estimators
-                print(
-                    f"\u2713 TabPFN v2 ready "
-                    f"(n_estimators={self.n_estimators}, device=auto)"
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to initialise TabPFN v2: {e}. "
-                    "Make sure tabpfn is installed and the v2 checkpoint "
-                    "is available in the local cache (~/.cache/tabpfn/)."
-                ) from e
 
-        self._adapter = _TabPFNAdapter(self._classifier)
+    def build_adapter(self, task, model):
+        if task == "classification":
+            # TabPFN is itself the classifier: fit it on flat tabular rows.
+            model.fit(_to_tabular(self.X_train), np.asarray(self.y_train))
+            return _TabPFNAdapter(model)
+        # Forecasting: BaseTSFMSolver builds the adapter from forecast_batch.
+        return super().build_adapter(task, model)
 
-    def run(self, _):
-        """Fit TabPFN on the training data (timed)."""
-        X_fit = _to_tabular(self.X_train)
-        y_fit = np.asarray(self.y_train)
-        self._classifier.fit(X_fit, y_fit)
-
-    def get_result(self):
-        """Return the fitted adapter wrapping the TabPFN classifier."""
-        return {"model": self._adapter}
+    def forecast_batch(self, inputs, covariates, prediction_length):
+        # self.model is the (tabicl-transforms + TabPFN) pipeline.
+        preds = forecast_windows(
+            self.model, inputs, prediction_length,
+            self.quantile_levels, self.meta.get("freq"),
+        )
+        return [torch.from_numpy(p) for p in preds]  # each (H, C, Q)

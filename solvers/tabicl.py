@@ -1,10 +1,17 @@
-"""TabICL-v2 solver for UCR classification.
+"""TabICL-v2 solver for UCR/UEA classification and forecasting.
 
-TabICL is a tabular foundation model that uses in-context learning (ICL) to
-classify new samples in a single forward pass. For the current UCR scope,
-datasets are univariate and fixed-length, so each ``(T, 1)`` sample is
-reshaped into a flat ``(T,)`` feature row and the full training matrix is
-passed to ``TabICLClassifier``.
+TabICL is a tabular foundation model that classifies via in-context learning
+(ICL) in a single forward pass. Each ``(T, C)`` sample is flattened to a
+``(T*C,)`` feature row and the whole training matrix is passed to
+``TabICLClassifier`` — the model *is* the classifier, so the default
+embedding + linear-probe classification strategy does not apply and
+``build_adapter`` is overridden to fit it directly.
+
+For forecasting, TabICL ships a dedicated pipeline (``tabicl.forecast``) that
+recasts the problem as tabular regression on timestamp features; the solver
+exposes it through ``forecast_batch`` (see
+:mod:`benchmark_utils.tabular_forecast`) and ``BaseTSFMSolver`` builds the
+forecasting adapter automatically.
 
 References:
     https://github.com/soda-inria/tabicl
@@ -13,19 +20,30 @@ References:
 
 import numpy as np
 import torch
-from benchopt import BaseSolver
-
 from tabicl import TabICLClassifier
 
-SUPPORTED_TASKS = {"classification"}
+from benchmark_utils.base_solver import BaseTSFMSolver
+from benchmark_utils.tabular_forecast import (
+    DEFAULT_FORECAST_QUANTILES,
+    build_forecaster,
+    forecast_windows,
+)
+
+
+def _to_tabular(X):
+    """Flatten a list of ``(T, C)`` samples into an ``(N, T*C)`` matrix."""
+    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
+    if arr.ndim == 3:
+        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
+    return arr
 
 
 class _TabICLAdapter:
     """Wrap a fitted TabICLClassifier behind the benchmark adapter API.
 
-    ``predict`` receives the entire test list in one call because TabICL is
-    an in-context learner — all test rows are scored jointly against the
-    stored training context.
+    ``predict`` receives the entire test list in one call because TabICL is an
+    in-context learner — all test rows are scored jointly against the stored
+    training context.
     """
 
     def __init__(self, model):
@@ -35,99 +53,73 @@ class _TabICLAdapter:
         return self.model.predict(_to_tabular(X))
 
 
-def _to_tabular(X):
-    """Convert a list of benchmark samples into a 2-D feature matrix.
-
-    Parameters
-    ----------
-    X : list of np.ndarray, each shape (T, C)
-        UCR samples.  ``C`` is 1 for the current scope.
-
-    Returns
-    -------
-    np.ndarray, shape (N, T * C)
-        Flat tabular matrix ready for TabICL.
-    """
-    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
-    if arr.ndim == 3:
-        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
-    return arr
-
-
-class Solver(BaseSolver):
-    """TabICL-v2 in-context learning solver for UCR classification.
-
-    The classifier is instantiated once in ``set_objective`` (not timed) so
-    that any checkpoint download is excluded from benchmark timing. The
-    actual ``fit`` — which stores the training context — runs in ``run``.
-    """
+class Solver(BaseTSFMSolver):
+    """TabICL-v2 in-context learning solver for UCR/UEA classification."""
 
     name = "TabICL-v2"
 
     requirements = ["pip::tabicl"]
 
-    sampling_strategy = "run_once"
+    # Forecasting knobs (fixed, not part of the benchmark grid). A short
+    # context + tiny regressor ensemble keep per-series fitting tractable;
+    # the temporal features already encode seasonality, so a long raw
+    # history adds little.
+    max_context_length = 512
+    forecast_n_estimators = 2
+    point_estimate = "mean"
+    # Push all of a dataset's series through the forecaster in one batch so the
+    # GPU worker pool (and checkpoint load) is spun up once, not per 128 windows.
+    forecast_inference_batch_size = 4096
 
     parameters = {
         "checkpoint_version": ["tabicl-classifier-v2-20260212.ckpt"],
         "n_estimators": [8],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"TabICL solver does not support task={task!r}"
-        return False, None
+    @property
+    def supported_tasks(self):
+        return {"classification", "forecasting"}
 
-    def set_objective(self, task, X_train, y_train, **meta):
-        """Prepare the solver for a given dataset configuration.
+    @property
+    def quantile_levels(self):
+        return DEFAULT_FORECAST_QUANTILES
 
-        Classifier instantiation is done here (not inside ``run``) so that
-        the checkpoint download/init time is excluded from benchmark timing.
-        """
-        self.task = task
-        self.X_train = X_train
-        self.y_train = y_train
-        self.meta = meta
+    @property
+    def model_id(self):
+        return f"{self.task}:{self.checkpoint_version}:{self.n_estimators}"
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # Reinstantiate when the checkpoint version or n_estimators changes.
-        current_key = (self.checkpoint_version, self.n_estimators)
-        should_reload = (
-            not hasattr(self, "_classifier")
-            or not hasattr(self, "_loaded_key")
-            or self._loaded_key != current_key
+    def load_model(self, device, dtype):
+        # For forecasting the "model" is the tabicl forecasting pipeline; the
+        # regressor itself loads lazily per series inside forecast_batch.
+        if self.task == "forecasting":
+            self.inference_batch_size = self.forecast_inference_batch_size
+            return build_forecaster(
+                "tabicl",
+                max_context_length=self.max_context_length,
+                point_estimate=self.point_estimate,
+                config={"n_estimators": self.forecast_n_estimators},
+            )
+        # Classifier instantiation (and checkpoint download) is untimed.
+        return TabICLClassifier(
+            checkpoint_version=self.checkpoint_version,
+            n_estimators=self.n_estimators,
+            device=device,
+            random_state=42,
+            verbose=False,
         )
-        if should_reload:
-            try:
-                self._classifier = TabICLClassifier(
-                    checkpoint_version=self.checkpoint_version,
-                    n_estimators=self.n_estimators,
-                    device=device,
-                    random_state=42,
-                    verbose=False,
-                )
-                self._loaded_key = current_key
-                print(
-                    f"\u2713 TabICL checkpoint ready: {self.checkpoint_version} "
-                    f"on device: {device}"
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to initialise TabICL checkpoint "
-                    f"'{self.checkpoint_version}': {e}. "
-                    "Make sure you have internet access and tabicl is installed."
-                ) from e
 
-        self._device = device
-        self._adapter = _TabICLAdapter(self._classifier)
+    def build_adapter(self, task, model):
+        if task == "classification":
+            # TabICL is itself the classifier: fit it on flat tabular rows.
+            model.fit(_to_tabular(self.X_train), np.asarray(self.y_train))
+            return _TabICLAdapter(model)
+        # Forecasting: BaseTSFMSolver builds the adapter from forecast_batch.
+        return super().build_adapter(task, model)
 
-    def run(self, _):
-        """Fit TabICL on the training data (timed)."""
-        X_fit = _to_tabular(self.X_train)
-        y_fit = np.asarray(self.y_train)
-        self._classifier.fit(X_fit, y_fit)
-
-    def get_result(self):
-        """Return the fitted adapter wrapping the TabICL classifier."""
-        return {"model": self._adapter}
+    def forecast_batch(self, inputs, covariates, prediction_length):
+        # self.model is the tabicl forecasting pipeline (see load_model).
+        preds = forecast_windows(
+            self.model, inputs, prediction_length,
+            self.quantile_levels, self.meta.get("freq"),
+        )
+        return [torch.from_numpy(p) for p in preds]  # each (H, C, Q)

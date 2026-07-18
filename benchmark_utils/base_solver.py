@@ -296,6 +296,12 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
+    # Every adapter path (build_adapter, LinearProbeAdapter.fit(), zero-shot
+    # forecast_batch) is a single fit/predict pass, never iterative — set
+    # explicitly so it never depends on lazy inheritance from the Objective
+    # (see notes/benchopt_sampling_strategy_cache_bug.md for why that matters).
+    sampling_strategy = "run_once"
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
         self._loaded_model_id: str | None = None
