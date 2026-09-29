@@ -99,13 +99,13 @@ from benchmark_utils.windowing import build_forecasting_data
 
 # ---------------------------------------------------------------------------
 # Canonical (dataset_name, term) table — derived from the GIFT-Eval
-# leaderboard Space (results/seasonal_naive/all_results.csv: 55 paths,
+# leaderboard Space (results/Seasonal_Naive/all_results.csv: 55 paths,
 # 97 combos, 34 short-only). Fetched once, stored as a small CSV under
 # benchopt's data path by ``prepare`` (or on first use, e.g. when
 # expanding ``dataset_name=all``).
 # ---------------------------------------------------------------------------
 _LEADERBOARD_REPO = "Salesforce/GIFT-Eval"
-_LEADERBOARD_FILE = "results/seasonal_naive/all_results.csv"
+_LEADERBOARD_FILE = "results/Seasonal_Naive/all_results.csv"
 _leaderboard_cache: "dict[str, tuple[str, ...]] | None" = None
 
 GIFTEVAL_TERMS: tuple[str, ...] = ("short", "medium", "long")
