@@ -52,11 +52,10 @@ class Solver(BaseSolver):
 
     Parameters
     ----------
-    season_length : int
+    season_length : int or "auto"
         Number of past steps to repeat. ``1`` recovers last-value
-        persistence; common picks are ``7`` (daily → weekly), ``12``
-        (monthly → yearly), ``24`` (hourly → daily), ``52`` (weekly →
-        yearly).
+        persistence. ``"auto"`` (the default) uses the dataset's own
+        seasonality, ``meta["seasonality"]``.
     """
 
     name = "SeasonalNaive"
@@ -64,7 +63,7 @@ class Solver(BaseSolver):
     requirements = []
 
     parameters = {
-        "season_length": [1, 7, 12, 24],
+        "season_length": ["auto"],
     }
 
     def skip(self, task, **kwargs):
@@ -79,9 +78,12 @@ class Solver(BaseSolver):
         self.meta = meta
 
     def run(self, _):
+        season_length = self.season_length
+        if season_length == "auto":
+            season_length = self.meta.get("seasonality", 1)
         self._adapter = _SeasonalNaiveForecaster(
             prediction_length=self.meta.get("prediction_length", 1),
-            season_length=self.season_length,
+            season_length=season_length,
         )
 
     def get_result(self):
