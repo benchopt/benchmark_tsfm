@@ -14,6 +14,8 @@ anomaly_detection  : metric(y_true, y_score) -> float
 event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
+import warnings
+
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
@@ -58,12 +60,54 @@ def _seasonal_naive_scale(y_train, seasonality: int) -> float:
     return scale if scale != 0 else 1.0
 
 
-def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarray:
+def _seasonal_naive_scales_per_window(
+    histories, cutoff_indexes, seasonality: int, nan_masks=None
+) -> np.ndarray:
+    """Seasonal-naive scale per window and channel, following
+    ``gluonts.ev.ts_stats.seasonal_error`` on the context available at
+    each cutoff (with its fall-back to seasonality 1 when the context
+    is shorter than the season). ``nan_masks``, when given, holds the
+    NaN locations of the original (pre-imputation) targets: diffs
+    touching an imputed point are excluded. Returns an (M, C) array in
+    the flattened series-major / cutoff-minor window order.
+    """
+    scales = []
+    if nan_masks is None:
+        nan_masks = [None] * len(histories)
+    for series, cutoffs, nan_mask in zip(histories, cutoff_indexes, nan_masks):
+        series = np.asarray(series)
+        for cutoff in cutoffs:
+            ctx = series[:cutoff]
+            s = seasonality if seasonality < ctx.shape[0] else 1
+            diff = np.abs(ctx[s:] - ctx[:-s])
+            if nan_mask is not None:
+                nm = nan_mask[:cutoff]
+                valid = ~(nm[s:] | nm[:-s])
+                diff = np.where(valid[:, None], diff, np.nan)
+                # a channel with no valid diff gets a NaN scale, which
+                # drops its scaled errors downstream
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    scale = np.nanmean(diff, axis=0)
+            else:
+                scale = diff.mean(axis=0)
+            # a constant context has a zero scale: the scaled errors are
+            # undefined, drop them as well
+            scale = np.where(scale == 0.0, np.nan, scale)
+            scales.append(scale)
+    return np.stack(scales, axis=0)
+
+
+def _pinball_per_level(
+    y_true: np.ndarray, forecast: ForecastOutput, valid_mask=None
+) -> np.ndarray:
     """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
     quants, levels = _stacked(forecast)  # (M,H,C,Q), (Q,)
     diff = y_true[..., None] - quants  # (M,H,C,Q)
     levels_b = levels.reshape(1, 1, 1, -1)
     loss = np.maximum(levels_b * diff, (levels_b - 1.0) * diff)
+    if valid_mask is not None:
+        return loss[valid_mask].mean(axis=0)  # (Q,)
     return loss.mean(axis=(0, 1, 2))  # (Q,)
 
 
@@ -72,32 +116,102 @@ def _pinball_per_level(y_true: np.ndarray, forecast: ForecastOutput) -> np.ndarr
 # ---------------------------------------------------------------------------
 
 
-def mae(y_true, forecast: ForecastOutput, **_):
+def mae(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     """Mean Absolute Error, averaged over all windows, horizons, channels."""
-    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))))
+    err = np.abs(y_true - _point_from_forecast(forecast))
+    return _masked_mean(err, valid_mask)
 
 
-def mse(y_true, forecast: ForecastOutput, **_):
+def mse(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     """Mean Squared Error, averaged over all windows, horizons, channels."""
-    return float(np.mean((y_true - _point_from_forecast(forecast)) ** 2))
+    err = (y_true - _point_from_forecast(forecast)) ** 2
+    return _masked_mean(err, valid_mask)
 
 
-def rmse(y_true, forecast: ForecastOutput, **_):
-    return float(np.sqrt(mse(y_true, forecast)))
+def rmse(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+    return float(np.sqrt(mse(y_true, forecast, valid_mask)))
 
 
-def mase(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
-    """Mean Absolute Scaled Error. Scale is naive-seasonal MAE on y_train."""
-    scale = _seasonal_naive_scale(y_train, seasonality)
-    return float(np.mean(np.abs(y_true - _point_from_forecast(forecast))) / scale)
+def mase(
+    y_true,
+    forecast: ForecastOutput,
+    y_train=None,
+    seasonality=1,
+    histories=None,
+    cutoff_indexes=None,
+    nan_masks=None,
+    valid_mask=None,
+    **_,
+):
+    """Mean Absolute Scaled Error, aggregated like
+    ``gluonts.evaluate_forecasts(..., axis=None)``.
 
+    The scale of each window is the seasonal-naive MAE of the context
+    seen at its cutoff, and the score is the mean of the per-point
+    scaled errors (not the ratio of two aggregated means). Requires
+    ``histories`` and ``cutoff_indexes``; without them, falls back to a
+    single scale computed on ``y_train``.
 
-def smape(y_true, forecast: ForecastOutput, **_):
-    """Symmetric Mean Absolute Percentage Error."""
+    ``nan_masks`` holds the NaN locations of the original
+    (pre-imputation) targets: diffs touching an imputed point are
+    excluded from the scale, and ``valid_mask`` (M, H, C) excludes the
+    imputed targets themselves.
+    """
     y_pred = _point_from_forecast(forecast)
-    denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
-    denom = np.where(denom == 0, 1.0, denom)
-    return float(np.mean(np.abs(y_true - y_pred) / denom))
+    err = np.abs(y_true - y_pred)
+    if histories is not None and cutoff_indexes is not None:
+        scales = _seasonal_naive_scales_per_window(
+            histories, cutoff_indexes, seasonality, nan_masks
+        )
+        scaled = err / scales[:, None, :]
+        if valid_mask is None:
+            valid_mask = np.ones(err.shape, dtype=bool)
+        # windows with an undefined scale (NaN) are dropped
+        valid_mask = valid_mask & ~np.isnan(scales)[:, None, :]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return float(np.mean(scaled[valid_mask]))
+    scale = _seasonal_naive_scale(y_train, seasonality)
+    return float(np.mean(err) / scale)
+
+
+def _masked_mean(values: np.ndarray, valid_mask) -> float:
+    """Mean over the valid points only when ``valid_mask`` is given."""
+    if valid_mask is None:
+        return float(np.mean(values))
+    return float(np.mean(values[valid_mask]))
+
+
+def windows_valid_mask(nan_masks, cutoff_indexes, target_shape) -> np.ndarray:
+    """Validity mask of the (M, H, C) target array: False on the points
+    that were imputed in the original targets. Takes the per-series NaN
+    masks and the jagged cutoffs, in the flattened series-major /
+    cutoff-minor window order; the per-step validity broadcasts over
+    channels."""
+    valid = np.ones(target_shape[:2], dtype=bool)
+    i = 0
+    for nan_mask, cutoffs in zip(nan_masks, cutoff_indexes):
+        for cutoff in cutoffs:
+            valid[i] = ~nan_mask[cutoff : cutoff + target_shape[1]]
+            i += 1
+    mask = np.empty(target_shape, dtype=bool)
+    mask[:] = valid[:, :, None]
+    return mask
+
+
+def smape(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+    """Symmetric Mean Absolute Percentage Error, gluonts formula:
+    ``2|y - yhat| / (|y| + |yhat|)``. Undefined (0/0) points are
+    dropped from the mean."""
+    y_pred = _point_from_forecast(forecast)
+    denom = np.abs(y_true) + np.abs(y_pred)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        per_point = 2 * np.abs(y_true - y_pred) / denom
+    if valid_mask is not None:
+        per_point = per_point[valid_mask]
+    valid = per_point[~np.isnan(per_point)]
+    if valid.size == 0:
+        return float("nan")
+    return float(valid.mean())
 
 
 def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
@@ -117,35 +231,41 @@ def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, 
 # ---------------------------------------------------------------------------
 
 
-def pinball(y_true, forecast: ForecastOutput, **_):
+def pinball(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     """Mean pinball (quantile) loss, averaged over all quantile levels."""
-    return float(_pinball_per_level(y_true, forecast).mean())
+    return float(_pinball_per_level(y_true, forecast, valid_mask).mean())
 
 
-def crps(y_true, forecast: ForecastOutput, **_):
+def crps(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     """CRPS approximated by the quantile-score formula: 2 * mean pinball loss.
 
     Converges to the true CRPS as the quantile grid becomes dense.
     """
-    return 2.0 * pinball(y_true, forecast)
+    return 2.0 * pinball(y_true, forecast, valid_mask)
 
 
-def wql(y_true, forecast: ForecastOutput, **_):
+def wql(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     """Weighted Quantile Loss (Salinas et al. / Chronos).
 
     ``WQL = (1/Q) sum_q [ 2 * sum_t pinball_q(y_t) / sum_t |y_t| ]``
     """
+    if valid_mask is not None:
+        y_valid = y_true[valid_mask]
+        denom = float(np.sum(np.abs(y_valid)))
+    else:
+        y_valid = y_true
+        denom = float(np.sum(np.abs(y_true)))
     _, levels = _stacked(forecast)
-    denom = float(np.sum(np.abs(y_true)))
     if denom == 0:
         return float("nan")
-    # _pinball_per_level returns per-level mean; multiply back by N to get sum.
-    n_elem = float(y_true.size)
-    per_level_sum = _pinball_per_level(y_true, forecast) * n_elem
+    n_elem = float(y_valid.size)
+    # _pinball_per_level returns a mean: multiply by N to get the sum
+    per_level = _pinball_per_level(y_true, forecast, valid_mask)
+    per_level_sum = per_level * n_elem
     return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
 
 
-def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
+def mcis(y_true, forecast: ForecastOutput, alpha=0.05, valid_mask=None, **_):
     """Mean Coverage Interval Score for a ``(1 - alpha)`` prediction interval.
 
     ``IS_alpha = (U - L) + (2/alpha)(L - y) 1[y < L] + (2/alpha)(y - U) 1[y > U]``
@@ -163,7 +283,7 @@ def mcis(y_true, forecast: ForecastOutput, alpha=0.05, **_):
     under = np.maximum(0.0, lower - y_true)
     over = np.maximum(0.0, y_true - upper)
     score = (upper - lower) + (2.0 / alpha) * (under + over)
-    return float(np.mean(score))
+    return _masked_mean(score, valid_mask)
 
 
 # ---------------------------------------------------------------------------
