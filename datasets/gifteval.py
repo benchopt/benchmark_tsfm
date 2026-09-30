@@ -71,9 +71,10 @@ entries are transposed to the repo's ``(T, C)`` contract.
 
 Cutoffs and windows
 -------------------
-We don't comply with GIFT-Eval's prescribed test cutoff; we use the same
-rolling-window logic as Monash via
-:func:`benchmark_utils.windowing.make_forecasting_splits`. The
+We replicate GIFT-Eval's prescribed test protocol: per-series windows
+``W = min(20, ceil(0.1 * min_series_length / prediction_length))``
+(``m4_*`` use a single window), with non-overlapping windows ending
+at the end of each series. The
 ``prediction_length`` for a given (freq, term) follows GIFT-Eval's
 canonical ``base × multiplier`` rule via
 :func:`benchmark_utils.forecasting_constants.gift_eval_prediction_length`.
@@ -82,6 +83,7 @@ Data contract output mirrors :mod:`datasets.monash`.
 """
 
 import csv
+import math
 from pathlib import Path
 
 import numpy as np
@@ -91,10 +93,16 @@ from benchmark_utils.covariates import Covariates
 from benchmark_utils.download_hf import snapshot_hf_files
 from benchmark_utils.forecasting_constants import (
     FORECASTING_METRICS,
-    from_pandas,
+    gift_eval_seasonality,
     gift_eval_prediction_length,
 )
 from benchmark_utils.windowing import build_forecasting_data
+
+
+# Window count of the GIFT-Eval test protocol (gift_eval.data:
+# TEST_SPLIT / MAX_WINDOW).
+GIFT_EVAL_TEST_SPLIT = 0.1
+GIFT_EVAL_MAX_WINDOW = 20
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +213,36 @@ def _skip_placeholder(reason: str) -> dict:
     return dict(_skip_reason=reason)
 
 
+def _impute_nan(series: np.ndarray) -> np.ndarray:
+    """Impute NaN targets the way the official GIFT-Eval notebooks do
+    (gluonts LastValueImputation): forward-fill each channel, flat-fill
+    leading NaNs with the first valid value, 0.0 for all-NaN channels.
+
+    9 GIFT-Eval datasets ship NaN targets; left as is, they propagate
+    through solver histories (``hist[-s:]``) and metric reductions,
+    silently NaN-ing the scores. The original NaN locations are
+    returned alongside the data as ``nan_mask`` for the metrics to
+    exclude the imputed points.
+    """
+    # Arrow columns can decode to zero-copy read-only views: copy
+    # before writing in place.
+    if not series.flags.writeable and np.isnan(series).any():
+        series = series.copy()
+    for c in range(series.shape[1]):
+        col = series[:, c]
+        nan = np.isnan(col)
+        if not nan.any() or nan.all():
+            if nan.all():
+                col[:] = 0.0
+            continue
+        idx = np.where(nan, 0, np.arange(len(col)))
+        np.maximum.accumulate(idx, out=idx)
+        col[nan] = col[idx[nan]]
+        first = int(np.argmax(~nan))
+        col[:first] = col[first]
+    return series
+
+
 class Dataset(BaseDataset):
     """GIFT-Eval forecasting dataset (loaded from HF Salesforce/GiftEval).
 
@@ -222,8 +260,11 @@ class Dataset(BaseDataset):
     prediction_length : int or None
         Explicit override. ``None`` → resolved from (freq, term) via
         :func:`benchmark_utils.forecasting_constants.gift_eval_prediction_length`.
-    n_windows : int
-        Number of rolling evaluation windows per series.
+    n_windows : int or "gifteval"
+        Number of rolling evaluation windows per series. The default
+        ``"gifteval"`` follows the GIFT-Eval protocol:
+        ``min(20, ceil(0.1 * min_series_length / pred_len))``, pinned
+        to 1 for ``m4_*`` datasets.
     max_series : int or None
         Optional cap on the number of series.
     debug : bool
@@ -238,7 +279,7 @@ class Dataset(BaseDataset):
         "dataset_name": ["m4_weekly/W"],
         "term": ["short"],
         "prediction_length": [None],
-        "n_windows": [1],
+        "n_windows": ["gifteval"],
         "max_series": [None],
         "debug": [False],
     }
@@ -277,6 +318,19 @@ class Dataset(BaseDataset):
             "data-*.arrow",
         )
 
+    def _resolve_n_windows(self, series_list, pred_len):
+        """Number of windows for the ``"gifteval"`` sentinel; ints pass
+        through unchanged."""
+        if self.n_windows != "gifteval":
+            return int(self.n_windows)
+        if "m4" in self.dataset_name:
+            return 1
+        min_len = min(ts.shape[0] for ts in series_list)
+        return min(
+            GIFT_EVAL_MAX_WINDOW,
+            max(1, math.ceil(GIFT_EVAL_TEST_SPLIT * min_len / pred_len)),
+        )
+
     def get_data(self):
         # Short-circuit non-canonical combos so heavy parsing doesn't run.
         if self.term not in _leaderboard().get(self.dataset_name, ()):
@@ -310,7 +364,7 @@ class Dataset(BaseDataset):
         # Frequency / seasonality — every series in a GIFT-Eval subset
         # shares the same freq, so taking it from the first entry is safe.
         pandas_freq = ds[0].get("freq") or "D"
-        freq, seasonality, _ = from_pandas(pandas_freq)
+        seasonality = gift_eval_seasonality(pandas_freq)
 
         pred_len = self.prediction_length
         if pred_len is None:
@@ -335,17 +389,30 @@ class Dataset(BaseDataset):
                 "had unsupported target shapes."
             )
 
+        # Original NaN locations, for the metrics to exclude the
+        # imputed points. build_forecasting_data drops series shorter
+        # than pred_len + 1: filter them out here to keep the lists
+        # aligned.
+        nan_mask = [
+            np.isnan(ts).any(axis=1)
+            for ts in series_list
+            if ts.shape[0] >= pred_len + 1
+        ]
+        series_list = [_impute_nan(ts) for ts in series_list]
+        n_windows = self._resolve_n_windows(series_list, pred_len)
+
         return dict(
             **build_forecasting_data(
                 series_list,
                 prediction_length=pred_len,
-                n_windows=self.n_windows,
+                n_windows=n_windows,
                 debug=self.debug,
             ),
             covariates=Covariates(),  # GIFT-Eval HF schema has no covariates
             task="forecasting",
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
-            freq=freq,
+            freq=pandas_freq,
             seasonality=seasonality,
+            nan_mask=nan_mask,
         )
