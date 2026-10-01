@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import io
 import math
-import re
 import sys
 from pathlib import Path
 
@@ -40,10 +39,6 @@ from scipy.stats import friedmanchisquare, rankdata, studentized_range
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from benchmark_utils.metrics import is_higher_better  # noqa: E402
-
-
-def short_solver(name: str) -> str:
-    return re.sub(r"\[.*?\]$", "", str(name)).strip()
 
 
 def discover_metrics(df: pd.DataFrame) -> list[str]:
@@ -209,7 +204,6 @@ def _cd_global(df: pd.DataFrame, ax: plt.Axes, alpha: float = 0.05) -> str:
     k, n_blocks = stacked.shape
 
     mean_ranks = stacked.mean(axis=1)
-    mean_ranks.index = [short_solver(s) for s in mean_ranks.index]
 
     # Friedman on the stacked ranks. friedmanchisquare ranks within each
     # block; since we already supplied per-block ranks, the re-ranking is a
@@ -319,8 +313,7 @@ def cd_for_metric(
         [rankdata(rank_mat[c].values, method="average") for c in rank_mat.columns]
     ).T
     ranks_df = pd.DataFrame(ranks_arr, index=mat.index, columns=mat.columns)
-    mean_ranks = ranks_df.mean(axis=1).rename(short_solver)
-    mean_ranks.index = [short_solver(s) for s in mean_ranks.index]
+    mean_ranks = ranks_df.mean(axis=1)
 
     # Friedman test
     chi2, pval = friedmanchisquare(*[mat.iloc[i].values for i in range(k)])
@@ -498,6 +491,7 @@ class Plot(BasePlot):
 
     name = "Critical Difference Diagram"
     type = "image"
+    requirements = ["pip::scikit-posthocs"]
     options = {
         "objective_column": ...,
     }
@@ -522,6 +516,10 @@ class Plot(BasePlot):
         return plots, options
 
     def plot(self, df, objective_column):
+        # benchopt pre-shortens ``solver_name`` before ``plot`` is called
+        # (keeping only the parameters that vary), so several parametrizations
+        # of one solver arrive as distinct labels — the CD diagram groups on
+        # that column and gets unique short labels for free.
         fig, ax = plt.subplots(figsize=(10, 5))
         cd_for_metric(df, objective_column, ax)
         return [{"image": _fig_to_array(fig), "label": objective_column}]
