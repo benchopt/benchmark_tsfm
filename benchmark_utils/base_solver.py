@@ -285,11 +285,10 @@ class BaseTSFMSolver(BaseSolver):
         forward call. Subclasses may override this to tune memory/throughput.
     """
 
-    supported_tasks: set[TaskType]
     task: TaskType
 
     X_train: Sequence[np.ndarray]
-    y_train: Sequence[np.ndarray]
+    y_train: Sequence[np.ndarray] | None
     meta: dict[str, Any]
 
     model: Any

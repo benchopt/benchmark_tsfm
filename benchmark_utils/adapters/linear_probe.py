@@ -54,7 +54,7 @@ class LinearProbeAdapter(BaseTSFMAdapter):
         self.classifier = classifier
         self.penalty = penalty
         self.C = C
-        self.alpha = (alpha,)
+        self.alpha = alpha
         self.n_estimators = n_estimators
         self._label_enc = LabelEncoder()
 

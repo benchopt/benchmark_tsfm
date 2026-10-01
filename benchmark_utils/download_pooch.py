@@ -91,6 +91,11 @@ def load_data_tsb_uad(path, records_ids, train_ratio, number):
     path = Path(path)
     base_name = _BASE_NAMES.get(path.name)
     extension = _FILES_EXT.get(path.name)
+    if base_name is None or extension is None:
+        raise ValueError(
+            f"Unknown TSB-UAD subdir {path.name!r}; expected one of "
+            f"{sorted(_BASE_NAMES)}."
+        )
 
     # get ids of records
     if records_ids in (None, "all", ["all"]):

@@ -14,6 +14,8 @@ anomaly_detection  : metric(y_true, y_score) -> float
 event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
+from typing import Any
+
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
@@ -24,6 +26,10 @@ from sklearn.metrics import (
 )
 
 from benchmark_utils.outputs import ForecastOutput
+
+# sklearn accepts int (0/1) for zero_division at runtime, but its stub only
+# types the str sentinel "warn"; typing the value as Any keeps pyright happy.
+_ZERO_DIV: Any = 0
 
 # ---------------------------------------------------------------------------
 # Forecasting — internal helpers
@@ -180,7 +186,7 @@ def balanced_accuracy(y_true, y_pred):
 
 
 def f1_weighted(y_true, y_pred):
-    return float(f1_score(y_true, y_pred, average="weighted", zero_division=0))
+    return float(f1_score(y_true, y_pred, average="weighted", zero_division=_ZERO_DIV))
 
 
 # ---------------------------------------------------------------------------
@@ -234,14 +240,14 @@ def f1_pa(y_true, y_score, threshold=None):
         for thr in thresholds:
             y_pred = (y_score_cat >= thr).astype(int)
             y_pred_pa = _point_adjust(y_true_cat, y_pred)
-            f = float(f1_score(y_true_cat, y_pred_pa, zero_division=0))
+            f = float(f1_score(y_true_cat, y_pred_pa, zero_division=_ZERO_DIV))
             if f > best_f1:
                 best_f1 = f
         return best_f1
 
     y_pred = (y_score_cat >= threshold).astype(int)
     y_pred_pa = _point_adjust(y_true_cat, y_pred)
-    return float(f1_score(y_true_cat, y_pred_pa, zero_division=0))
+    return float(f1_score(y_true_cat, y_pred_pa, zero_division=_ZERO_DIV))
 
 
 def _point_adjust(y_true, y_pred):
