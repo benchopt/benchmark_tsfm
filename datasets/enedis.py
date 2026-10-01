@@ -101,7 +101,7 @@ class Dataset(BaseDataset):
 
     name = "Enedis"
 
-    requirements = ["pip::huggingface_hub", "fsspec"]
+    requirements = ["pip::huggingface_hub", "pip::fsspec"]
 
     parameters = {
         "freq": ["D", "6h", "30min"],

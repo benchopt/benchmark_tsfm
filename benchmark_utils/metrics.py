@@ -541,8 +541,12 @@ EVENT_METRICS = {
     "map_iou": map_iou,
 }
 
-ALL_METRICS = {**FORECASTING_METRICS, **CLASSIFICATION_METRICS, **AD_METRICS}
-
+ALL_METRICS = {
+    **FORECASTING_METRICS,
+    **CLASSIFICATION_METRICS,
+    **AD_METRICS,
+    **EVENT_METRICS,
+}
 
 # ---------------------------------------------------------------------------
 # Direction: which metrics are better when larger
@@ -560,7 +564,10 @@ HIGHER_IS_BETTER = frozenset(
         "f1_weighted",  # classification
         "auc_roc",
         "auc_pr",
-        "f1_pa",  # anomaly detection
+        "f1_pa",
+        "vus_roc",
+        "vus_pr",  # anomaly detection
+        "map_iou",  # event detection
     }
 )
 

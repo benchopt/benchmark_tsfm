@@ -92,7 +92,7 @@ class Solver(BaseSolver):
 
     name = "Naive"
 
-    # No extra requirements beyond the objective's scikit-learn + aeon.
+    # No extra requirements
     requirements = []
 
     parameters = {

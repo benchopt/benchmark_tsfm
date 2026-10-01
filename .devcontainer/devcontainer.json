@@ -1,0 +1,30 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+	"name": "Benchmark TSFM",
+	"image": "mcr.microsoft.com/devcontainers/anaconda:3",
+	"remoteUser": "root",
+
+	"runArgs": [
+		"--shm-size=50G",
+		"--memory=50g",
+		"--memory-swap=50g",
+		// only supportd on some devices
+		// "--cpus=32",
+		// Expose a GPU with specific index:
+        "--device", "nvidia.com/gpu=0",
+	],
+
+	"onCreateCommand": "bash .devcontainer/post-create.sh",
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"charliermarsh.ruff",
+				"tamasfe.even-better-toml",
+				"Anthropic.claude-code"
+			]
+		}
+	}
+}

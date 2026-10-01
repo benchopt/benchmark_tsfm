@@ -234,7 +234,7 @@ class BaseTSFMAdapter:
 
     \begin{lstlisting}
 class Objective(BaseObjective):
-    requirements = ["scikit-learn", "aeon"]  # shared by all solvers
+    requirements = ["scikit-learn"]  # shared by all solvers
 
     def set_data(self, X_train, y_train, X_test, y_test,
                  task, metrics, **meta):
