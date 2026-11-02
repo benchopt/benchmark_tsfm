@@ -70,11 +70,12 @@ class Solver(BaseTSFMSolver):
 
     def forecast_batch(self, inputs, covariates, prediction_length):
         device = next(self.model.parameters()).device
-        # momentfm's PositionalEmbedding has a fixed 5000-patch buffer:
-        # series with more patches crash the encoder. Keep the last
-        # 1024 patches (MOMENT-1 pretrains on 512-step windows, so
-        # longer context is extrapolation anyway).
-        max_context = 1024 * self.model.patch_len
+        # MOMENT-1 pretrains on fixed 512-step windows (64 patches) and
+        # claims no longer context, so the lookback is capped at the
+        # training horizon. This also keeps inputs clear of momentfm's
+        # fixed 5000-patch positional buffer, whose overflow crashes
+        # the encoder.
+        max_context = 64 * self.model.patch_len
         results = []
         for inp in inputs:
             # inp: (T, C) — Moment expects (1, C, T)
