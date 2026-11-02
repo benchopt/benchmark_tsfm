@@ -34,7 +34,7 @@ def test_median_is_point_forecast():
 
 def test_sigma_is_rms_seasonal_diff():
     # diffs at lag 2: (2-0)^2, (3-1)^2 -> sigma = sqrt(8/2) = 2
-    # cycles over H=3: k = floor([0,1,2]/2) = [0,0,1] -> sigmah = [2, 2, 2*sqrt(2)]
+    # cycles over H=3: k = floor([0,1,2]/2) = [0,0,1] -> sigma_h = [2, 2, 2*sqrt(2)]
     fan = _fan(_HIST, prediction_length=3, season_length=2)
     np.testing.assert_allclose(
         fan[0, :, 0, Q_LO],
@@ -70,7 +70,7 @@ def test_constant_channel_has_zero_sigma():
 
 
 def test_season_length_1_spread_grows_with_step():
-    # [0, 1, 2, 3], m=1: sigma = sqrt(3/3) = 1, sigmah = 1*sqrt(1..H)
+    # [0, 1, 2, 3], m=1: sigma = sqrt(3/3) = 1, sigma_h = 1*sqrt(1..H)
     fan = _fan([0.0, 1.0, 2.0, 3.0], prediction_length=3, season_length=1)
     np.testing.assert_allclose(fan[0, :, 0, Q_05], [3.0, 3.0, 3.0])
     np.testing.assert_allclose(fan[0, :, 0, Q_HI], 3.0 + Z10 * np.sqrt([1.0, 2.0, 3.0]))

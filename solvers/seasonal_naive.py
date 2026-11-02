@@ -13,11 +13,11 @@ Besides the 0.5 (median = point forecast), the adapter emits a 9-level
 quantile fan (0.1 to 0.9) replicating the native prediction intervals of
 ``statsforecast.SeasonalNaive`` (the GIFT-Eval official baseline): per
 channel, ``sigma`` is the RMS of the in-sample one-step seasonal
-differences ``y[t] - y[t - season_length]``, the spread at step ``h`` is
-``sigma * sqrt(k + 1)`` with ``k = floor(h / season_length)`` repeated
-cycles, and level ``q`` sits at ``mean +/- norm.ppf(max(q, 1 - q)) *
-sigmah``. The level 0.5 matches the native ``lo-0``/``hi-0`` columns,
-i.e. the point itself.
+differences ``y[t] - y[t - season_length]``, the spread at step ``i``
+(0-based forecast index) is ``sigma_h = sigma * sqrt(k + 1)`` with
+``k = floor(i / season_length)`` repeated cycles, and level ``q`` sits
+at ``mean +/- norm.ppf(max(q, 1 - q)) * sigma_h``. The level 0.5 matches
+the native ``lo-0``/``hi-0`` columns, i.e. the point itself.
 """
 
 import numpy as np
@@ -77,10 +77,10 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
                 k_cycle = np.floor(
                     np.arange(self.prediction_length) / self.season_length
                 )
-                sigmah = sigma[None, :] * np.sqrt(k_cycle + 1)[:, None]  # (H, C)
+                sigma_h = sigma[None, :] * np.sqrt(k_cycle + 1)[:, None]  # (H, C)
                 fan[k] = (
                     point[:, :, None]
-                    + self._sign * self._z[None, None, :] * sigmah[:, :, None]
+                    + self._sign * self._z[None, None, :] * sigma_h[:, :, None]
                 )
             quantiles.append(fan)
         return ForecastOutput(quantiles=quantiles, quantile_levels=QUANTILE_LEVELS)

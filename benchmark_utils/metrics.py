@@ -15,6 +15,7 @@ event_detection    : metric(y_true, y_pred, **kw) -> float
 """
 
 import warnings
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 from sklearn.metrics import (
@@ -49,7 +50,9 @@ def _point_from_forecast(forecast: ForecastOutput) -> np.ndarray:
     return quants.mean(axis=-1)
 
 
-def _seasonal_naive_scale(y_train, seasonality: int) -> float:
+def _seasonal_naive_scale(
+    y_train: Iterable[np.ndarray], seasonality: int
+) -> float:
     """MAE of the seasonal-naive forecast on training series. Used by MASE."""
     scales = []
     for ts in y_train:
@@ -61,7 +64,10 @@ def _seasonal_naive_scale(y_train, seasonality: int) -> float:
 
 
 def _seasonal_naive_scales_per_window(
-    histories, cutoff_indexes, seasonality: int, nan_masks=None
+    histories: Iterable[np.ndarray],
+    cutoff_indexes: Iterable[Sequence[int]],
+    seasonality: int,
+    nan_masks: Sequence[np.ndarray | None] | None = None,
 ) -> np.ndarray:
     """Seasonal-naive scale per window and channel, following
     ``gluonts.ev.ts_stats.seasonal_error`` on the context available at
@@ -99,7 +105,9 @@ def _seasonal_naive_scales_per_window(
 
 
 def _pinball_per_level(
-    y_true: np.ndarray, forecast: ForecastOutput, valid_mask=None
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     """Pinball loss array of shape (Q,): mean over (M, H, C) for each level."""
     quants, levels = _stacked(forecast)  # (M,H,C,Q), (Q,)
@@ -116,33 +124,48 @@ def _pinball_per_level(
 # ---------------------------------------------------------------------------
 
 
-def mae(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def mae(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Mean Absolute Error, averaged over all windows, horizons, channels."""
     err = np.abs(y_true - _point_from_forecast(forecast))
     return _masked_mean(err, valid_mask)
 
 
-def mse(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def mse(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Mean Squared Error, averaged over all windows, horizons, channels."""
     err = (y_true - _point_from_forecast(forecast)) ** 2
     return _masked_mean(err, valid_mask)
 
 
-def rmse(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def rmse(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     return float(np.sqrt(mse(y_true, forecast, valid_mask)))
 
 
 def mase(
-    y_true,
+    y_true: np.ndarray,
     forecast: ForecastOutput,
-    y_train=None,
-    seasonality=1,
-    histories=None,
-    cutoff_indexes=None,
-    nan_masks=None,
-    valid_mask=None,
+    y_train: Iterable[np.ndarray] | None = None,
+    seasonality: int = 1,
+    histories: Iterable[np.ndarray] | None = None,
+    cutoff_indexes: Iterable[Sequence[int]] | None = None,
+    nan_masks: Sequence[np.ndarray | None] | None = None,
+    valid_mask: np.ndarray | None = None,
     **_,
-):
+) -> float:
     """Mean Absolute Scaled Error, aggregated like
     ``gluonts.evaluate_forecasts(..., axis=None)``.
 
@@ -174,13 +197,19 @@ def mase(
     return float(np.mean(err) / scale)
 
 
-def _masked_mean(values: np.ndarray, valid_mask) -> float:
+def _masked_mean(
+    values: np.ndarray, valid_mask: np.ndarray | None
+) -> float:
     if valid_mask is None:
         return float(np.mean(values))
     return float(np.mean(values[valid_mask]))
 
 
-def windows_valid_mask(nan_masks, cutoff_indexes, target_shape) -> np.ndarray:
+def windows_valid_mask(
+    nan_masks: Sequence[np.ndarray],
+    cutoff_indexes: Sequence[Sequence[int]],
+    target_shape: tuple[int, ...],
+) -> np.ndarray:
     """Validity mask of the (M, H, C) target array: False on the points
     that were imputed in the original targets. Takes the per-series NaN
     masks and the jagged cutoffs, in the flattened series-major /
@@ -197,7 +226,12 @@ def windows_valid_mask(nan_masks, cutoff_indexes, target_shape) -> np.ndarray:
     return mask
 
 
-def smape(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def smape(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Symmetric Mean Absolute Percentage Error, gluonts formula:
     ``2|y - yhat| / (|y| + |yhat|)``. Undefined (0/0) points are
     dropped from the mean."""
@@ -213,7 +247,13 @@ def smape(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     return float(valid.mean())
 
 
-def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, **_):
+def skill_score_ratio(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    y_train: Iterable[np.ndarray],
+    seasonality: int = 1,
+    **_,
+) -> float:
     """1 - MAE_model / MAE_naive.
 
     ``MAE_naive`` is the seasonal-naive MAE on the training series (same
@@ -230,12 +270,22 @@ def skill_score_ratio(y_true, forecast: ForecastOutput, y_train, seasonality=1, 
 # ---------------------------------------------------------------------------
 
 
-def pinball(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def pinball(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Mean pinball (quantile) loss, averaged over all quantile levels."""
     return float(_pinball_per_level(y_true, forecast, valid_mask).mean())
 
 
-def crps(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def crps(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """CRPS approximated by the quantile-score formula: 2 * mean pinball loss.
 
     Converges to the true CRPS as the quantile grid becomes dense.
@@ -243,7 +293,12 @@ def crps(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     return 2.0 * pinball(y_true, forecast, valid_mask)
 
 
-def wql(y_true, forecast: ForecastOutput, valid_mask=None, **_):
+def wql(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Weighted Quantile Loss (Salinas et al. / Chronos).
 
     ``WQL = (1/Q) sum_q [ 2 * sum_t pinball_q(y_t) / sum_t |y_t| ]``
@@ -264,7 +319,13 @@ def wql(y_true, forecast: ForecastOutput, valid_mask=None, **_):
     return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
 
 
-def mcis(y_true, forecast: ForecastOutput, alpha=0.05, valid_mask=None, **_):
+def mcis(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    alpha: float = 0.05,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
     """Mean Coverage Interval Score for a ``(1 - alpha)`` prediction interval.
 
     ``IS_alpha = (U - L) + (2/alpha)(L - y) 1[y < L] + (2/alpha)(y - U) 1[y > U]``

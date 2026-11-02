@@ -84,6 +84,7 @@ Data contract output mirrors :mod:`datasets.monash`.
 
 import csv
 import math
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -318,7 +319,9 @@ class Dataset(BaseDataset):
             "data-*.arrow",
         )
 
-    def _resolve_n_windows(self, series_list, pred_len):
+    def _resolve_n_windows(
+        self, series_list: Iterable[np.ndarray], pred_len: int
+    ) -> int:
         """Number of windows for the ``"gifteval"`` sentinel; ints pass
         through unchanged."""
         if self.n_windows != "gifteval":
