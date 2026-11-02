@@ -70,9 +70,17 @@ class Solver(BaseTSFMSolver):
 
     def forecast_batch(self, inputs, covariates, prediction_length):
         device = next(self.model.parameters()).device
+        # MOMENT-1 pretrains on fixed 512-step windows (64 patches) and
+        # claims no longer context, so the lookback is capped at the
+        # training horizon. This also keeps inputs clear of momentfm's
+        # fixed 5000-patch positional buffer, whose overflow crashes
+        # the encoder.
+        max_context = 64 * self.model.patch_len
         results = []
         for inp in inputs:
             # inp: (T, C) — Moment expects (1, C, T)
+            if inp.shape[0] > max_context:
+                inp = inp[-max_context:]
             x_enc = inp.float().T.unsqueeze(0).to(device)  # (1, C, T)
             input_mask = torch.ones(1, inp.shape[0], dtype=torch.float32, device=device)
 
