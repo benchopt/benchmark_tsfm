@@ -89,6 +89,42 @@ def from_pandas(freq_alias: str) -> tuple[str, int, int]:
     return freq_alias, max(1, seasonality // max(mult, 1)), default_h
 
 
+# gluonts ``DEFAULT_SEASONALITIES`` (time_feature/seasonality.py): the
+# table the GIFT-Eval leaderboard uses for MASE and SeasonalNaive.
+# Differs from ``_BASE`` on D (1 vs 7), W (1 vs 52) and S (3600 vs 1).
+_GLUONTS_SEASONALITIES = {
+    "S": 3600,
+    "T": 1440,
+    "H": 24,
+    "D": 1,
+    "W": 1,
+    "M": 12,
+    "Q": 4,
+    "Y": 1,
+}
+
+
+def gift_eval_seasonality(freq_alias: str) -> int:
+    """Seasonality used by the GIFT-Eval leaderboard (gluonts table).
+
+    Mirrors ``gluonts.time_feature.get_seasonality``: look up the base
+    alias (anchors and modern pandas spellings normalized), divide by
+    the multiplier, fall back to 1 when the division is not exact or
+    the alias is unknown.
+    """
+    if not freq_alias:
+        return 1
+    m = _PANDAS_ALIAS_RE.match(freq_alias.split("-", 1)[0])
+    if not m:
+        return 1
+    mult = int(m.group(1)) if m.group(1) else 1
+    base = _NORMALIZE_BASE.get(m.group(2), m.group(2)[:1].upper())
+    if base not in _GLUONTS_SEASONALITIES:
+        return 1
+    seasonality, remainder = divmod(_GLUONTS_SEASONALITIES[base], mult)
+    return seasonality if not remainder else 1
+
+
 # ---------------------------------------------------------------------------
 # GIFT-Eval term resolution
 #
