@@ -1,24 +1,22 @@
 """Chronos-2 solver for the TSFM benchmark (local inference).
 
 Directly supports:
-  - forecasting : zero-shot via ``Chronos2Pipeline.predict``
+  - forecasting : zero-shot via ``Chronos2Pipeline.predict_quantiles``
 
 Additionally provides:
   - ``embed_batch``: pooled encoder embeddings for classification and
     anomaly detection via the default adaptation strategies.
 
 Model loading is done in ``set_objective`` (untimed). Inference batches
-every (series, cutoff) pair into a single ``Chronos2Pipeline.predict``
-call — the pipeline accepts a list of variable-length tensors and
-applies left-padding internally, so all the per-cutoff work happens in
-one forward pass.
+every (series, cutoff) pair into a single
+``Chronos2Pipeline.predict_quantiles`` call: the pipeline accepts a list
+of variable-length tensors and applies left-padding internally, so all
+the per-cutoff work happens in one forward pass.
 
 References
 ----------
     https://github.com/amazon-science/chronos-forecasting
 """
-
-import functools
 
 import numpy as np
 import torch
@@ -59,6 +57,9 @@ class Solver(BaseTSFMSolver):
 
     @property
     def model_id(self):
+        if self.model_size == "base":
+            # Leaderboard checkpoint; no autogluon/chronos-2-base on HF.
+            return "amazon/chronos-2"
         return f"autogluon/chronos-2-{self.model_size}"
 
     def load_model(self, device, dtype):
@@ -68,21 +69,27 @@ class Solver(BaseTSFMSolver):
             dtype=dtype,
         )
 
-    @functools.cached_property
+    @property
     def quantile_levels(self):
-        return tuple(float(q) for q in self.model.quantiles)
+        # Canonical 9 levels (GIFT-Eval evaluator convention, same tuple
+        # the Chronos t5 solver reports); predict_quantiles slices the
+        # native grid to the requested levels (no interpolation), so
+        # WQL/pinball/CRPS/MCIS are scored on the same fan as the leaderboard.
+        return (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
     def forecast_batch(self, inputs, covariates, prediction_length):
         # inputs: list of (T, C) tensors — Chronos-2 expects (C, T)
         chrono_inputs = [inp.T for inp in inputs]
         with torch.no_grad():
-            # pipeline.predict returns list of (C, Q, H) tensors
-            output = self.model.predict(
+            # predict_quantiles slices the native fan to the requested
+            # levels (0.1..0.9 are in the trained grid, no interpolation).
+            output, _ = self.model.predict_quantiles(
                 chrono_inputs,
                 prediction_length=prediction_length,
+                quantile_levels=list(self.quantile_levels),
             )
-        # Convert (C, Q, H) → (H, C, Q) for base class assembly
-        return [pred.permute(2, 0, 1) for pred in output]
+        # Convert (C, H, Q) → (H, C, Q) for base class assembly
+        return [pred.permute(1, 0, 2) for pred in output]
 
     def embed_batch(self, inputs):
         pooler = POOLERS[self.pooler]()
