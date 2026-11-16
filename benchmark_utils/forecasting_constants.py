@@ -1,4 +1,5 @@
-"""Shared forecasting constants: frequency / seasonality tables and metrics.
+"""Shared forecasting constants: frequency / seasonality tables, metrics
+and the canonical quantile levels.
 
 Two sources name frequencies differently:
   - aeon (used by Monash) uses words: "yearly", "weekly", "minutely", ...
@@ -17,6 +18,11 @@ FORECASTING_METRICS = (
     "mae", "mse", "rmse", "mase", "smape",
     "crps", "wql", "mcis", "pinball", "skill_score_ratio",
 )
+
+# Quantile levels the GIFT-Eval evaluator scores on; solvers whose native
+# fan is wider slice their output to this tuple, so band metrics stay
+# comparable across solvers and with the leaderboard.
+CANONICAL_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 # Canonical base alias → (display_freq, MASE seasonality, default forecast horizon)
 _BASE = {
