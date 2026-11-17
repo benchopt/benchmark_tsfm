@@ -69,8 +69,8 @@ Each HF entry exposes ``item_id``, ``start``, ``freq``, ``target``.
 ``jena_weather/*``, ``solar/*``). Both shapes are handled — multivariate
 entries are transposed to the repo's ``(T, C)`` contract.
 
-A few subsets carry past-only dynamic real covariates
-(``past_feat_dynamic_real``, same nested-list layout as ``target``, same
+A few subsets carry past-only covariates (field
+``past_feat_dynamic_real``, same nested-list layout as ``target``, same
 per-row length): bitbrains_*, bizitobs_*, M_DENSE. They are exposed as
 ``Covariates.hist_covars``, which the official leaderboard evals
 condition on when present.
