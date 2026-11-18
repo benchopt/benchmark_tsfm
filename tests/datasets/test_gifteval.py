@@ -106,3 +106,15 @@ def test_gifteval_n_windows(min_len, pred_len, dataset_name, expected):
 def test_gifteval_n_windows_int_passthrough():
     ds = Dataset.get_instance(dataset_name="m4_weekly/W", term="short", n_windows=4)
     assert ds._resolve_n_windows([np.zeros((100, 1))], 13) == 4
+
+
+def test_to_time_major():
+    np.testing.assert_equal(
+        gifteval._to_time_major(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])),
+        np.array([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]),
+    )
+    np.testing.assert_equal(
+        gifteval._to_time_major(np.array([1.0, 2.0])), np.array([[1.0], [2.0]])
+    )
+    with pytest.raises(ValueError):
+        gifteval._to_time_major(np.zeros((2, 2, 2)))

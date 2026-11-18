@@ -69,6 +69,12 @@ Each HF entry exposes ``item_id``, ``start``, ``freq``, ``target``.
 ``jena_weather/*``, ``solar/*``). Both shapes are handled — multivariate
 entries are transposed to the repo's ``(T, C)`` contract.
 
+A few subsets carry past-only covariates (field
+``past_feat_dynamic_real``, same nested-list layout as ``target``, same
+per-row length): bitbrains_*, bizitobs_*, M_DENSE. They are exposed as
+``Covariates.hist_covars``, which the official leaderboard evals
+condition on when present.
+
 Cutoffs and windows
 -------------------
 We replicate GIFT-Eval's prescribed test protocol: per-series windows
@@ -212,6 +218,16 @@ def _skip_placeholder(reason: str) -> dict:
     """Flag the combo for skipping via ``Objective.skip``, which benchopt
     calls before ``set_data`` — no other data field is needed."""
     return dict(_skip_reason=reason)
+
+
+def _to_time_major(values: np.ndarray) -> np.ndarray:
+    """Re-shape a covariate entry as ``(T, C)``, mirroring ``target``."""
+    values = np.asarray(values, dtype=np.float32)
+    if values.ndim == 1:
+        return values[:, None]
+    if values.ndim == 2:
+        return values.T
+    raise ValueError(f"Unsupported covariate shape: {values.shape}")
 
 
 def _impute_nan(series: np.ndarray) -> np.ndarray:
@@ -378,13 +394,20 @@ class Dataset(BaseDataset):
         # Build (T, C) series with columnar numpy access — avoids
         # round-tripping every float through python objects. Univariate
         # entries arrive as flat arrays (ndim=1); multivariate as (C, T).
-        series_list = []
-        for values in ds.with_format("numpy")["target"]:
+        loader = ds.with_format("numpy")
+        has_past_covars = "past_feat_dynamic_real" in ds.column_names
+        past_column = loader["past_feat_dynamic_real"] if has_past_covars else None
+        series_list, past_covars_list = [], []
+        for row, values in enumerate(loader["target"]):
             values = np.asarray(values, dtype=np.float32)
             if values.ndim == 1:
                 series_list.append(values.reshape(-1, 1))         # (T, 1)
             elif values.ndim == 2:
                 series_list.append(values.T)                        # (C,T)→(T,C)
+            else:
+                continue
+            if past_column is not None:
+                past_covars_list.append(_to_time_major(past_column[row]))
 
         if not series_list:
             raise ValueError(
@@ -402,6 +425,13 @@ class Dataset(BaseDataset):
             if ts.shape[0] >= pred_len + 1
         ]
         series_list = [_impute_nan(ts) for ts in series_list]
+        # Same filter as nan_mask, so covariate rows stay aligned with the
+        # series.
+        hist_covars = [
+            hist
+            for hist, ts in zip(past_covars_list, series_list)
+            if ts.shape[0] >= pred_len + 1
+        ]
         n_windows = self._resolve_n_windows(series_list, pred_len)
 
         return dict(
@@ -411,7 +441,11 @@ class Dataset(BaseDataset):
                 n_windows=n_windows,
                 debug=self.debug,
             ),
-            covariates=Covariates(),  # GIFT-Eval HF schema has no covariates
+            covariates=(
+                Covariates(hist_covars=hist_covars)
+                if hist_covars
+                else Covariates()
+            ),
             task="forecasting",
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
