@@ -6,7 +6,37 @@ from benchmark_utils.forecasting_constants import (
     from_aeon,
     from_pandas,
     gift_eval_prediction_length,
+    gift_eval_seasonality,
 )
+
+
+@pytest.mark.parametrize(
+    "alias, expected",
+    [
+        # gluonts DEFAULT_SEASONALITIES: differs from _BASE on D, W and S
+        ("H", 24),
+        ("D", 1),
+        ("W", 1),
+        ("W-SUN", 1),
+        ("M", 12),
+        ("Q", 4),
+        ("Y", 1),
+        ("T", 1440),
+        ("S", 3600),
+        # multipliers divide the seasonality, non-exact division → 1
+        ("15T", 96),
+        ("5T", 288),
+        ("6H", 4),
+        ("7T", 1),
+        ("10S", 360),
+        ("45T", 32),
+        # unknown or empty → 1
+        ("", 1),
+        ("??", 1),
+    ],
+)
+def test_gift_eval_seasonality(alias, expected):
+    assert gift_eval_seasonality(alias) == expected
 
 
 @pytest.mark.parametrize(

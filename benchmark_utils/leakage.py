@@ -76,13 +76,14 @@ def _perturb_future(
     *adds*, or *scales by* the future — there is no perturbation a
     non-degenerate model could be invariant to by coincidence.
     """
-    out = np.array(series, dtype=np.float64, copy=True)
+    out = np.array(series, copy=True)
     future_shape = out[cut:].shape
     # Scale relative to the history so the perturbation dominates any
     # plausible signal the model might be reading, then shift far off.
     hist = out[:cut]
     scale = 10.0 * (float(np.nanstd(hist)) + 1.0) if hist.size else 100.0
-    out[cut:] = rng.standard_normal(future_shape) * scale + 1e4
+    perturbed = rng.standard_normal(future_shape) * scale + 1e4
+    out[cut:] = perturbed.astype(out.dtype, copy=False)
     return out
 
 

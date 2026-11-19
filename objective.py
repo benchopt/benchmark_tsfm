@@ -55,6 +55,7 @@ from benchmark_utils.metrics import (  # noqa: F401  (re-exported)
     ALL_METRICS,
     HIGHER_IS_BETTER,
     is_higher_better,
+    windows_valid_mask,
 )
 
 
@@ -184,10 +185,23 @@ class Objective(BaseObjective):
         # same order the flattened forecast iterates (series-major, cutoff-minor).
         y_true = np.concatenate([np.asarray(yt) for yt in self.y_test], axis=0)
 
+        # nan_mask carries the original NaN locations of imputed
+        # targets: metrics score the valid points only.
+        nan_masks = self.meta.get("nan_mask")
+        valid_mask = None
+        if nan_masks:
+            valid_mask = windows_valid_mask(
+                nan_masks, self.cutoff_indexes, y_true.shape
+            )
+
         kwargs = dict(
             y_train=self.X_train,
             seasonality=self.meta.get("seasonality", 1),
             alpha=self.meta.get("mcis_alpha", 0.05),
+            histories=self.X_test,
+            cutoff_indexes=self.cutoff_indexes,
+            nan_masks=nan_masks,
+            valid_mask=valid_mask,
         )
         result = {
             name: ALL_METRICS[name](y_true, forecast, **kwargs) for name in self.metrics
