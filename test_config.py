@@ -7,7 +7,10 @@ for some reason (e.g. missing API key, or too long to run in CI).
 
 import os
 
-import pytest
+# Probe: does a single OpenMP thread stop Chronos' segfault on macOS CI?
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import pytest  # noqa: E402
 
 
 # These datasets load fine locally, but their download hosts block / rate-limit
