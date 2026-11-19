@@ -256,6 +256,22 @@ class BaseTSFMSolver(BaseSolver):
     - load_model(): load/initialize the model for the given device
     - At least one of forecast_batch / embed_batch / time_embed_batch
 
+    Adapter API
+    -----------
+    ``run()`` calls ``build_adapter(task, model)`` and stores the result as
+    ``self._adapter``; ``get_result()`` returns ``{"model": self._adapter}``.
+    The Objective calls ``adapter.predict(...)``, never the solver directly.
+
+    The default ``build_adapter`` (see its docstring for the exact per-task
+    priority order) picks a strategy based on which of ``forecast_batch`` /
+    ``embed_batch`` / ``time_embed_batch`` the subclass has overridden
+    (detected via ``can_forecast`` / ``can_embed`` / ``can_time_embed``). Most
+    subclasses never touch adapters directly: implement one of those three
+    methods and the matching adapter is wired up automatically. Only override
+    ``build_adapter`` itself when the model *is* the predictor and no separate
+    adapter is needed — e.g. TabICL/TabPFN's classification path fits the
+    model in place, skipping the embed + linear-probe adapter entirely.
+
     Attributes
     ----------
     supported_tasks
@@ -296,10 +312,7 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
-    # Every adapter path (build_adapter, LinearProbeAdapter.fit(), zero-shot
-    # forecast_batch) is a single fit/predict pass, never iterative — set
-    # explicitly so it never depends on lazy inheritance from the Objective
-    # (see notes/benchopt_sampling_strategy_cache_bug.md for why that matters).
+    # Solver is never evaluated iteratively; see notes/benchopt_sampling_strategy_cache_bug.md.
     sampling_strategy = "run_once"
 
     def __init__(self, **kwargs: Any) -> None:

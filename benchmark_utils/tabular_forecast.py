@@ -33,6 +33,14 @@ DEFAULT_FORECAST_QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 SYNTH_TS_START = "1700-01-01"
 
 
+def to_tabular(X):
+    """Flatten a list of ``(T, C)`` samples into an ``(N, T*C)`` matrix."""
+    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
+    if arr.ndim == 3:
+        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
+    return arr
+
+
 class _TabPFNForecastEngine(ForecastEngine):
     """tabicl ForecastEngine that predicts with ``TabPFNRegressor``.
 

@@ -27,15 +27,8 @@ from benchmark_utils.tabular_forecast import (
     DEFAULT_FORECAST_QUANTILES,
     build_forecaster,
     forecast_windows,
+    to_tabular,
 )
-
-
-def _to_tabular(X):
-    """Flatten a list of ``(T, C)`` samples into an ``(N, T*C)`` matrix."""
-    arr = np.asarray(X, dtype=np.float32)  # (N, T) or (N, T, C)
-    if arr.ndim == 3:
-        arr = arr.reshape(arr.shape[0], -1)  # flatten C into features
-    return arr
 
 
 class _TabICLAdapter:
@@ -50,7 +43,7 @@ class _TabICLAdapter:
         self.model = model
 
     def predict(self, X):
-        return self.model.predict(_to_tabular(X))
+        return self.model.predict(to_tabular(X))
 
 
 class Solver(BaseTSFMSolver):
@@ -60,20 +53,20 @@ class Solver(BaseTSFMSolver):
 
     requirements = ["pip::tabicl"]
 
-    # Forecasting knobs (fixed, not part of the benchmark grid). A short
-    # context + tiny regressor ensemble keep per-series fitting tractable;
-    # the temporal features already encode seasonality, so a long raw
-    # history adds little.
-    max_context_length = 512
-    forecast_n_estimators = 2
-    point_estimate = "mean"
-    # Push all of a dataset's series through the forecaster in one batch so the
-    # GPU worker pool (and checkpoint load) is spun up once, not per 128 windows.
-    forecast_inference_batch_size = 4096
-
     parameters = {
         "checkpoint_version": ["tabicl-classifier-v2-20260212.ckpt"],
         "n_estimators": [8],
+        # Forecasting knobs: single-valued (not swept) but exposed so they
+        # show up in results/parametrized names rather than being hidden
+        # class attributes. A short context keeps per-series fitting
+        # tractable; the temporal features already encode seasonality, so a
+        # long raw history adds little.
+        "max_context_length": [512],
+        "point_estimate": ["mean"],
+        # Push all of a dataset's series through the forecaster in one batch
+        # so the GPU worker pool (and checkpoint load) spins up once, not
+        # per 128 windows.
+        "forecast_inference_batch_size": [4096],
     }
 
     @property
@@ -97,7 +90,7 @@ class Solver(BaseTSFMSolver):
                 "tabicl",
                 max_context_length=self.max_context_length,
                 point_estimate=self.point_estimate,
-                config={"n_estimators": self.forecast_n_estimators},
+                config={"n_estimators": self.n_estimators},
             )
         # Classifier instantiation (and checkpoint download) is untimed.
         return TabICLClassifier(
@@ -111,7 +104,7 @@ class Solver(BaseTSFMSolver):
     def build_adapter(self, task, model):
         if task == "classification":
             # TabICL is itself the classifier: fit it on flat tabular rows.
-            model.fit(_to_tabular(self.X_train), np.asarray(self.y_train))
+            model.fit(to_tabular(self.X_train), np.asarray(self.y_train))
             return _TabICLAdapter(model)
         # Forecasting: BaseTSFMSolver builds the adapter from forecast_batch.
         return super().build_adapter(task, model)
