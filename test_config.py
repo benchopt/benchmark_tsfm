@@ -8,7 +8,12 @@ for some reason (e.g. missing API key, or too long to run in CI).
 import os
 import sys
 
-import pytest
+# On macOS, torch's and conda's OpenMP runtimes clash and make Chronos'
+# T5 encoder segfault; a single OpenMP thread avoids it.
+if sys.platform == "darwin":
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import pytest  # noqa: E402
 
 
 # These datasets load fine locally, but their download hosts block / rate-limit
@@ -46,10 +51,6 @@ def check_test_solver_run(benchmark, solver_class, test_dataset_name):
         # the linear probe now rejects. It is a GPU model, so skip it when no
         # CUDA device is available (e.g. CPU-only CI runners).
         pytest.skip("Chronos2 requires CUDA (non-finite embeddings on CPU).")
-
-    if name == "chronos" and sys.platform == "darwin":
-        # Chronos' T5 encoder segfaults in torch's embedding on macOS runners.
-        pytest.skip("Chronos segfaults on macOS (T5 embedding in torch).")
 
 
 def _cuda_available():
