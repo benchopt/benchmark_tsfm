@@ -51,7 +51,7 @@ class Solver(BaseTSFMSolver):
 
     name = "TabICL-v2"
 
-    requirements = ["pip::tabicl"]
+    requirements = ["pip::tabicl[forecast]"]
 
     parameters = {
         "checkpoint_version": ["tabicl-classifier-v2-20260212.ckpt"],

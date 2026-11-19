@@ -51,7 +51,7 @@ class Solver(BaseTSFMSolver):
     name = "TabPFN-v2"
 
     # tabicl provides the forecasting transforms reused for TabPFN forecasting.
-    requirements = ["pip::tabpfn", "pip::tabicl"]
+    requirements = ["pip::tabpfn", "pip::tabicl[forecast]"]
 
     parameters = {
         "n_estimators": [8],

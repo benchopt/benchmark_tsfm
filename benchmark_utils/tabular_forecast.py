@@ -15,6 +15,9 @@ A solver only needs to build a forecaster (:func:`build_forecaster`) and call
 handles all ForecastInput/ForecastOutput plumbing automatically.
 """
 
+import re
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -25,12 +28,17 @@ from tabicl.forecast._engine import ForecastEngine, _to_numpy
 # is always available to ForecastOutput.point.
 DEFAULT_FORECAST_QUANTILES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
-# Anchor for synthesized timestamps (see forecast_windows). Pandas' ns-precision
-# Timestamp only spans ~1677-2262; starting at 2000 leaves just ~262 years of
-# forward headroom, which yearly-freq series (e.g. GiftEval m4_yearly, up to
-# ~280 points) can overflow. 1700 gives ~560 years of headroom instead — the
-# actual date is otherwise arbitrary, these timestamps are synthetic.
+# Anchor for synthesized timestamps (see forecast_windows). Pandas'
+# ns-precision Timestamp ends in 2262, so yearly windows must stay under ~560
+# steps: forecast_windows trims the history to max_context_length to ensure it.
 SYNTH_TS_START = "1700-01-01"
+
+# Pre-2.2 pandas aliases, rejected by pandas 3.
+_LEGACY_FREQ = {
+    "A": "YE", "Y": "YE", "AS": "YS", "Q": "QE", "M": "ME",
+    "H": "h", "T": "min", "S": "s", "L": "ms", "U": "us", "N": "ns",
+}  # fmt: skip
+_FREQ_RE = re.compile(r"^(\d*)([A-Za-z]+)(-\w+)?$")
 
 
 def to_tabular(X):
@@ -108,14 +116,19 @@ def safe_freq(freq):
     """Return a pandas-usable frequency alias, defaulting to hourly.
 
     The benchmark ForecastInput carries no timestamps, so we synthesize a
-    regular index for the temporal encoders; the alias only needs to be valid.
+    regular index for the temporal encoders. Legacy aliases are mapped to
+    their current spelling, and an unusable alias falls back with a warning.
     """
     if not freq:
         return "h"
+    if m := _FREQ_RE.match(freq):
+        mult, base, anchor = m.groups()
+        freq = f"{mult}{_LEGACY_FREQ.get(base, base)}{anchor or ''}"
     try:
         pd.date_range(SYNTH_TS_START, periods=2, freq=freq)
         return freq
     except (ValueError, TypeError):
+        warnings.warn(f"Unusable freq {freq!r}, synthesizing hourly timestamps.")
         return "h"
 
 
@@ -141,32 +154,38 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
     qs = list(quantile_levels)
     freq = safe_freq(freq)
 
-    frames = []
+    context, future = [], []
     shapes = []
     for j, window in enumerate(inputs):
         window = np.asarray(window, dtype=np.float32)
         if window.ndim == 1:
             window = window[:, None]
-        C = window.shape[1]
+        # tabicl only uses the last max_context_length steps: trimming here
+        # keeps the frames small and the synthetic timestamps in range.
+        window = window[-forecaster.max_context_length :]
+        # tabicl's seasonality detection needs at least 2 points.
+        window = np.pad(window, ((max(0, 2 - len(window)), 0), (0, 0)), mode="edge")
+        T, C = window.shape
         shapes.append(C)
-        ts = pd.date_range(SYNTH_TS_START, periods=window.shape[0], freq=freq)
+        # Explicit future timestamps: tabicl would otherwise infer the freq,
+        # which fails on histories shorter than 3 steps.
+        ts = pd.date_range(SYNTH_TS_START, periods=T + prediction_length, freq=freq)
         for c in range(C):
-            frames.append(
+            item_id = f"{j}:{c}"
+            context.append(
                 pd.DataFrame(
-                    {
-                        "item_id": f"{j}:{c}",
-                        "timestamp": ts,
-                        "target": window[:, c],
-                    }
+                    {"item_id": item_id, "timestamp": ts[:T], "target": window[:, c]}
                 )
             )
+            future.append(pd.DataFrame({"item_id": item_id, "timestamp": ts[T:]}))
 
-    if not frames:
+    if not context:
         return []
 
-    context_df = pd.concat(frames, ignore_index=True)
     pred = forecaster.predict_df(
-        context_df, prediction_length=prediction_length, quantiles=qs
+        pd.concat(context, ignore_index=True),
+        future_df=pd.concat(future, ignore_index=True),
+        quantiles=qs,
     )
 
     outputs = []
