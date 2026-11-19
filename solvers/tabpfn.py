@@ -112,7 +112,10 @@ class Solver(BaseTSFMSolver):
     def forecast_batch(self, inputs, covariates, prediction_length):
         # self.model is the (tabicl-transforms + TabPFN) pipeline.
         preds = forecast_windows(
-            self.model, inputs, prediction_length,
-            self.quantile_levels, self.meta.get("freq"),
+            self.model,
+            inputs,
+            prediction_length,
+            self.quantile_levels,
+            self.meta.get("freq"),
         )
         return [torch.from_numpy(p) for p in preds]  # each (H, C, Q)

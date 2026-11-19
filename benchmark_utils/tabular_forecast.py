@@ -66,7 +66,9 @@ class _TabPFNForecastEngine(ForecastEngine):
             ModelVersion.V2, ignore_pretraining_limits=True, **self._tabpfn_config
         )
         model.fit(train_X, train_y)
-        q = np.asarray(model.predict(test_X, output_type="quantiles", quantiles=quantiles))
+        q = np.asarray(
+            model.predict(test_X, output_type="quantiles", quantiles=quantiles)
+        )
 
         if 0.5 in quantiles:
             point = q[quantiles.index(0.5)]
@@ -77,8 +79,14 @@ class _TabPFNForecastEngine(ForecastEngine):
         return result
 
 
-def build_forecaster(kind, *, max_context_length, temporal_features=None,
-                     point_estimate="mean", config=None):
+def build_forecaster(
+    kind,
+    *,
+    max_context_length,
+    temporal_features=None,
+    point_estimate="mean",
+    config=None,
+):
     """Build a tabicl-pipeline forecaster backed by TabICL or TabPFN."""
     forecaster = TabICLForecaster(
         max_context_length=max_context_length,
@@ -143,17 +151,23 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
         shapes.append(C)
         ts = pd.date_range(SYNTH_TS_START, periods=window.shape[0], freq=freq)
         for c in range(C):
-            frames.append(pd.DataFrame({
-                "item_id": f"{j}:{c}",
-                "timestamp": ts,
-                "target": window[:, c],
-            }))
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "item_id": f"{j}:{c}",
+                        "timestamp": ts,
+                        "target": window[:, c],
+                    }
+                )
+            )
 
     if not frames:
         return []
 
     context_df = pd.concat(frames, ignore_index=True)
-    pred = forecaster.predict_df(context_df, prediction_length=prediction_length, quantiles=qs)
+    pred = forecaster.predict_df(
+        context_df, prediction_length=prediction_length, quantiles=qs
+    )
 
     outputs = []
     for j, C in enumerate(shapes):

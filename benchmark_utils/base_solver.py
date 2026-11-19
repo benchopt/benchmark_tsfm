@@ -312,7 +312,8 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
-    # Solver is never evaluated iteratively; see notes/benchopt_sampling_strategy_cache_bug.md.
+    # Single fit/predict pass: pin it so the cache key never depends on the
+    # Objective's lazily inherited value.
     sampling_strategy = "run_once"
 
     def __init__(self, **kwargs: Any) -> None:
