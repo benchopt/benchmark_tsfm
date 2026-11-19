@@ -13,7 +13,7 @@ jobs:
   benchopt_dev:
     uses: benchopt/template_benchmark/.github/workflows/test_benchmarks.yml@main
     with:
-      benchopt_branch: benchopt@main
+      benchopt_branch: benchopt@78e7b9c2700b8ce36ea6890a9eed0b55fbe99f8c
       cache_dir: ./data
   benchopt_release:
     uses: benchopt/template_benchmark/.github/workflows/test_benchmarks.yml@main
