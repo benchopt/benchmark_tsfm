@@ -1,0 +1,131 @@
+"""Offline tests for the tabular foundation-model solver, with fake models."""
+
+import numpy as np
+import pytest
+
+pytest.importorskip("tabicl.forecast")
+
+from sklearn.neighbors import KNeighborsClassifier  # noqa: E402
+from tabicl.forecast import TabICLForecaster  # noqa: E402
+
+from benchmark_utils.forecasting_constants import (  # noqa: E402
+    CANONICAL_QUANTILE_LEVELS,
+)
+from benchmark_utils.inputs import ForecastInput  # noqa: E402
+from benchmark_utils.tabular_fm import (  # noqa: E402
+    TabularFMSolver,
+    _RegressorEngine,
+    forecast_windows,
+    safe_freq,
+)
+
+QS = list(CANONICAL_QUANTILE_LEVELS)
+
+
+class _ArrayRegressor:
+    """TabICL-style: predicts quantile level q as the constant q, (n, Q)."""
+
+    def fit(self, X, y):
+        return self
+
+    def predict(self, X, output_type, alphas):
+        return np.tile(alphas, (len(X), 1))
+
+
+class _ListRegressor(_ArrayRegressor):
+    """TabPFN-style: one array per quantile level."""
+
+    def predict(self, X, output_type, quantiles):
+        return [np.full(len(X), q) for q in quantiles]
+
+
+def _forecaster(regressor=None, quantiles_kwarg="alphas", max_context_length=32):
+    forecaster = TabICLForecaster(max_context_length=max_context_length)
+    forecaster.predictor = _RegressorEngine(
+        regressor or _ArrayRegressor(), quantiles_kwarg
+    )
+    return forecaster
+
+
+@pytest.mark.parametrize(
+    "regressor, kwarg", [(_ArrayRegressor(), "alphas"), (_ListRegressor(), "quantiles")]
+)
+def test_forecast_windows_shapes_and_quantile_order(regressor, kwarg):
+    rng = np.random.default_rng(0)
+    inputs = [rng.normal(size=(40, 2)), rng.normal(size=50)]
+    out = forecast_windows(_forecaster(regressor, kwarg), inputs, 5, QS, "D")
+    assert [o.shape for o in out] == [(5, 2, len(QS)), (5, 1, len(QS))]
+    np.testing.assert_allclose(out[0][2, 1], QS)
+
+
+@pytest.mark.parametrize("length", [1, 2])
+def test_forecast_windows_very_short_history(length):
+    inputs = [np.arange(length, dtype=float), np.arange(30, dtype=float)]
+    out = forecast_windows(_forecaster(), inputs, 4, QS, "D")
+    assert out[0].shape == (4, 1, len(QS))
+
+
+def test_forecast_windows_long_yearly_history():
+    # 900 yearly steps from the synthetic anchor overflow pandas' range
+    # unless the history is trimmed to the context length first.
+    out = forecast_windows(_forecaster(), [np.ones(900)], 6, QS, "Y")
+    assert out[0].shape == (6, 1, len(QS))
+
+
+@pytest.mark.parametrize(
+    "alias, expected",
+    [
+        ("A-DEC", "YE-DEC"),
+        ("Y", "YE"),
+        ("Q", "QE"),
+        ("M", "ME"),
+        ("H", "h"),
+        ("6H", "6h"),
+        ("5T", "5min"),
+        ("4S", "4s"),
+        ("W-SUN", "W-SUN"),
+        ("D", "D"),
+        ("QS-OCT", "QS-OCT"),
+        (None, "h"),
+    ],
+)
+def test_safe_freq_normalizes_legacy_aliases(alias, expected):
+    assert safe_freq(alias) == expected
+
+
+def test_safe_freq_warns_on_unusable_alias():
+    with pytest.warns(UserWarning, match="freq"):
+        assert safe_freq("not-a-freq") == "h"
+
+
+class _FakeSolver(TabularFMSolver):
+    name = "fake"
+    quantiles_kwarg = "alphas"
+
+    def make_classifier(self, device):
+        return KNeighborsClassifier(n_neighbors=1)
+
+    def make_regressor(self):
+        return _ArrayRegressor()
+
+
+def _fit(task, X_train, y_train=None, **meta):
+    solver = _FakeSolver(max_context_length=32, inference_batch_size=4096)
+    solver.set_objective(X_train, y_train, task, **meta)
+    solver.run(None)
+    return solver.get_result()["model"]
+
+
+def test_solver_classification_fits_on_flat_rows():
+    rng = np.random.default_rng(0)
+    X = [rng.normal(size=(20, 2)) + k for k in (0, 0, 5, 5)]
+    model = _fit("classification", X, np.array([0, 0, 1, 1]), n_classes=2)
+    np.testing.assert_array_equal(model.predict(X), [0, 0, 1, 1])
+
+
+def test_solver_forecasting_end_to_end():
+    series = [np.arange(40, dtype=np.float32)[:, None]]
+    model = _fit("forecasting", series, prediction_length=3, freq="H")
+    x = ForecastInput(x=series, cutoff_indexes=[[30, 37]])
+    out = model.predict(x)
+    assert out.quantiles[0].shape == (2, 3, 1, len(QS))
