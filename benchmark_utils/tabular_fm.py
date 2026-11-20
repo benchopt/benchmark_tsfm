@@ -88,41 +88,48 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
     qs = list(quantile_levels)
     freq = safe_freq(freq)
 
-    context, future = [], []
-    shapes = []
-    for j, window in enumerate(inputs):
-        window = np.asarray(window, dtype=np.float32)
-        if window.ndim == 1:
-            window = window[:, None]
-        # tabicl only uses the last max_context_length steps.
-        window = window[-forecaster.max_context_length :]
-        T, C = window.shape
-        shapes.append(C)
-        # Explicit future timestamps: tabicl would otherwise infer the freq,
-        # which fails on histories shorter than 3 steps.
-        ts = pd.date_range(
-            SYNTH_TS_START, periods=T + prediction_length, freq=freq, unit="ms"
-        )
-        for c in range(C):
-            item_id = f"{j}:{c}"
-            context.append(
-                pd.DataFrame(
-                    {"item_id": item_id, "timestamp": ts[:T], "target": window[:, c]}
-                )
-            )
-            future.append(pd.DataFrame({"item_id": item_id, "timestamp": ts[T:]}))
-
-    if not context:
+    if not inputs:
         return []
-
-    pred = forecaster.predict_df(
-        pd.concat(context, ignore_index=True),
-        future_df=pd.concat(future, ignore_index=True),
-        quantiles=qs,
+    # tabicl only uses the last max_context_length steps.
+    windows = [
+        np.asarray(w, dtype=np.float32).reshape(len(w), -1)[
+            -forecaster.max_context_length :
+        ]
+        for w in inputs
+    ]
+    shapes = [w.shape[1] for w in windows]
+    # One tabicl item per (window, channel), with its history length.
+    ids = [f"{j}:{c}" for j, C in enumerate(shapes) for c in range(C)]
+    lengths = np.repeat([w.shape[0] for w in windows], shapes)
+    # Explicit future timestamps: tabicl would otherwise infer the freq,
+    # which fails on histories shorter than 3 steps.
+    ts = pd.date_range(
+        SYNTH_TS_START,
+        periods=lengths.max() + prediction_length,
+        freq=freq,
+        unit="ms",
+    )
+    # Step index of each row within its item, for the history then the future.
+    ctx_pos = np.arange(lengths.sum()) - np.repeat(
+        np.cumsum(lengths) - lengths, lengths
+    )
+    fut_pos = np.repeat(lengths, prediction_length) + np.tile(
+        np.arange(prediction_length), len(ids)
+    )
+    context = pd.DataFrame(
+        {
+            "item_id": np.repeat(ids, lengths),
+            "timestamp": ts[ctx_pos],
+            "target": np.concatenate([w.T.ravel() for w in windows]),
+        }
+    )
+    future = pd.DataFrame(
+        {"item_id": np.repeat(ids, prediction_length), "timestamp": ts[fut_pos]}
     )
 
+    pred = forecaster.predict_df(context, future_df=future, quantiles=qs)
+
     # Rows in input order (tabicl sorts item ids), prediction_length per item.
-    ids = [f"{j}:{c}" for j, C in enumerate(shapes) for c in range(C)]
     q = pred.loc[ids, qs].to_numpy(np.float32)
     q = q.reshape(len(ids), prediction_length, len(qs)).transpose(1, 0, 2)
     return np.split(q, np.cumsum(shapes)[:-1], axis=1)
