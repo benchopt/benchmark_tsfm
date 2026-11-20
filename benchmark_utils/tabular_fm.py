@@ -183,7 +183,7 @@ class TabularFMSolver(BaseTSFMSolver):
     def set_objective(self, *args, **kwargs):
         super().set_objective(*args, **kwargs)
         # The model is cached across runs, so each run sets its own seed.
-        seed = self.get_seed(use_repetition=True)
+        seed = self.get_seed(use_dataset=True, use_solver=True, use_repetition=True)
         if self.task == "classification":
             self.model[-1].set_params(random_state=seed)
         else:
