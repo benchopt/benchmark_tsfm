@@ -78,13 +78,15 @@ def build_forecasting_data(
     prediction_length: int,
     n_windows: int = 1,
     debug: bool = False,
+    min_context: int = MIN_CONTEXT,
 ) -> dict:
     """Build the shared train/test split fields of a forecasting data dict.
 
     Keeps everything but the last ``prediction_length * n_windows`` steps
     of each series as training context, then delegates the evaluation
     windows to :func:`make_forecasting_splits` (a single window in debug
-    mode). Series shorter than ``prediction_length + MIN_CONTEXT`` are dropped.
+    mode). Windows with fewer than ``min_context`` history steps are skipped,
+    and series with no window left are dropped.
 
     ``y_train`` is ``None``: forecasting is self-supervised, so solvers
     that fine-tune carve their own (context, target) windows out of
@@ -98,7 +100,7 @@ def build_forecasting_data(
     test_len = prediction_length * n_windows
     X_train, full_series = [], []
     for ts in series:
-        if ts.shape[0] < prediction_length + MIN_CONTEXT:
+        if ts.shape[0] < prediction_length + min_context:
             continue
         X_train.append(ts[:max(1, ts.shape[0] - test_len)])
         full_series.append(ts)
@@ -110,6 +112,7 @@ def build_forecasting_data(
         full_series,
         prediction_length=prediction_length,
         n_windows=1 if debug else n_windows,
+        min_context=min_context,
     )
     return dict(
         X_train=X_train,
