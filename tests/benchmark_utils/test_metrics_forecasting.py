@@ -51,7 +51,7 @@ def test_scales_per_window_short_context_falls_back_to_season_1():
 
 def test_scales_per_window_nan_mask_excludes_imputed_diffs():
     histories = [np.array([[1.0], [np.nan], [3.0], [5.0]])]
-    nan_masks = [np.array([False, True, False, False])]
+    nan_masks = [np.array([[False], [True], [False], [False]])]
     # the NaN at position 1 kills the diff |3-1|: only |5-3| remains
     scales = _seasonal_naive_scales_per_window(histories, [[4]], 1, nan_masks=nan_masks)
     np.testing.assert_allclose(scales, [[2.0]])
@@ -98,11 +98,11 @@ def test_mase_drops_undefined_scale_points():
 
 
 def test_windows_valid_mask():
-    nan_masks = [np.array([False, False, False, True, False])]
+    nan_masks = [np.array([[0, 0], [0, 0], [0, 0], [1, 0], [0, 1]], dtype=bool)]
     cutoffs = [[3, 4]]
-    # H=1: window 0 covers index 3 (NaN -> invalid), window 1 covers 4
-    mask = windows_valid_mask(nan_masks, cutoffs, (2, 1, 1))
-    np.testing.assert_array_equal(mask, [[[False]], [[True]]])
+    # H=1: window 0 covers index 3, window 1 covers 4, channel by channel
+    mask = windows_valid_mask(nan_masks, cutoffs, (2, 1, 2))
+    np.testing.assert_array_equal(mask, [[[False, True]], [[True, False]]])
 
 
 def test_mae_valid_mask():
