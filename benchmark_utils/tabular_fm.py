@@ -163,16 +163,31 @@ class TabularFMSolver(BaseTSFMSolver):
 
     @abstractmethod
     def make_classifier(self, device):
-        """Return an unfitted classifier placed on ``device``."""
+        """Return an unfitted classifier placed on ``device``.
+
+        It must accept ``random_state``, set from benchopt's seed at each run.
+        """
 
     @abstractmethod
     def make_regressor(self):
-        """Return an unfitted regressor; tabicl assigns it a device per worker."""
+        """Return an unfitted regressor; tabicl assigns it a device per worker.
+
+        It must accept ``random_state``, set from benchopt's seed at each run.
+        """
 
     @staticmethod
     @abstractmethod
     def predict_quantiles(model, X, levels):
         """Return the ``(n, Q)`` quantiles of ``X`` at ``levels``."""
+
+    def set_objective(self, *args, **kwargs):
+        super().set_objective(*args, **kwargs)
+        # The model is cached across runs, so each run sets its own seed.
+        seed = self.get_seed(use_repetition=True)
+        if self.task == "classification":
+            self.model[-1].set_params(random_state=seed)
+        else:
+            self.model.predictor._regressor.set_params(random_state=seed)
 
     def load_model(self, device, dtype):
         # Weights load lazily in fit(): fit a copy on a toy table so the

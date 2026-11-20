@@ -42,7 +42,6 @@ class Solver(TabularFMSolver):
             checkpoint_version=f"tabicl-classifier-{self.version}.ckpt",
             n_estimators=self.n_estimators,
             device=device,
-            random_state=42,
             verbose=False,
         )
 

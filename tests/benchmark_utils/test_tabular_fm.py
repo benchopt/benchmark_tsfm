@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("tabicl.forecast")
 
 from sklearn.base import BaseEstimator  # noqa: E402
-from sklearn.neighbors import KNeighborsClassifier  # noqa: E402
+from sklearn.tree import DecisionTreeClassifier  # noqa: E402
 from tabicl.forecast import TabICLForecaster  # noqa: E402
 
 from benchmark_utils.forecasting_constants import (  # noqa: E402
@@ -23,6 +23,9 @@ QS = list(CANONICAL_QUANTILE_LEVELS)
 
 
 class _ConstRegressor(BaseEstimator):
+    def __init__(self, random_state=None):
+        self.random_state = random_state
+
     def fit(self, X, y):
         return self
 
@@ -86,7 +89,7 @@ class _FakeSolver(TabularFMSolver):
     predict_quantiles = staticmethod(_predict_quantiles)
 
     def make_classifier(self, device):
-        return KNeighborsClassifier(n_neighbors=1)
+        return DecisionTreeClassifier()
 
     def make_regressor(self):
         return _ConstRegressor()
@@ -94,6 +97,7 @@ class _FakeSolver(TabularFMSolver):
 
 def _fit(task, X_train, y_train=None, **meta):
     solver = _FakeSolver(max_context_length=32, inference_batch_size=4096)
+    solver.get_seed = lambda **kwargs: 0  # no benchopt run context here
     solver.set_objective(X_train, y_train, task, **meta)
     solver.run(None)
     return solver.get_result()["model"]

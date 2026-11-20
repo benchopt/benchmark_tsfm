@@ -53,7 +53,6 @@ class Solver(TabularFMSolver):
             ModelVersion.V2,
             n_estimators=self.n_estimators,
             device="auto",
-            random_state=42,
             ignore_pretraining_limits=True,
         )
 

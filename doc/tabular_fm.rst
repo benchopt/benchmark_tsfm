@@ -75,7 +75,8 @@ Subclass provides           Used for
 =========================== ============================================
 
 Both estimators are returned unfitted. The base class fits them when it
-receives the data.
+receives the data. They must accept ``random_state``, which the base class sets
+from benchopt's ``get_seed`` at each run, so repetitions use different seeds.
 
 Classification
 ~~~~~~~~~~~~~~
