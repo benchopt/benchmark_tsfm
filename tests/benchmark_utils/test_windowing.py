@@ -33,12 +33,12 @@ def test_short_series_dropped():
     assert len(d["X_train"]) == len(d["X_test"]) == 1
 
 
-def test_windows_with_one_point_history_skipped():
-    # T=21 with H=10: the first of 2 windows would start after 1 point.
+def test_windows_with_short_history_skipped():
+    # T=25 with H=10: the first of 2 windows would start after 5 points.
     d = build_forecasting_data(
-        [_series(21), _series(11)], prediction_length=10, n_windows=2
+        [_series(25), _series(15)], prediction_length=10, n_windows=2
     )
-    assert d["cutoff_indexes"] == [[11]]
+    assert d["cutoff_indexes"] == [[15]]
 
 
 def test_all_series_too_short_raises():

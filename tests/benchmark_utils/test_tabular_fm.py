@@ -48,7 +48,7 @@ def test_forecast_windows_shapes_and_quantile_order():
 
 
 def test_forecast_windows_very_short_history():
-    # 2 points is the shortest history the forecasting datasets produce.
+    # tabicl needs at least 2 points, below the datasets' MIN_CONTEXT.
     inputs = [np.arange(2, dtype=float), np.arange(30, dtype=float)]
     out = forecast_windows(_forecaster(), inputs, 4, QS, "D")
     assert out[0].shape == (4, 1, len(QS))
