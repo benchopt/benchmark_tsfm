@@ -195,7 +195,7 @@ class Dataset(BaseDataset):
     # Read by the solvers' skip without loading the data.
     task = "forecasting"
 
-    requirements = ["pip::huggingface-hub", "pip::pooch"]
+    requirements = ["pip::huggingface-hub", "pip::pooch", "pip::pyyaml"]
 
     parameters = {
         "dataset_name": ["LOOP_SEATTLE_1H"],
