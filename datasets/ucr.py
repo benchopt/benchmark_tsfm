@@ -33,6 +33,8 @@ class Dataset(BaseDataset):
     """
 
     name = "UCR"
+    # Read by the solvers' skip without loading the data.
+    task = "classification"
 
     requirements = ["pip::tslearn"]
 
@@ -74,7 +76,7 @@ class Dataset(BaseDataset):
             y_train=y_tr_enc,
             X_test=X_test,
             y_test=y_te_enc,
-            task="classification",
+            task=self.task,
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
             n_classes=int(len(le.classes_)),
         )

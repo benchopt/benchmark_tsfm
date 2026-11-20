@@ -62,6 +62,8 @@ class Dataset(BaseDataset):
     """
 
     name = "ECG"
+    # Read by the solvers' skip without loading the data.
+    task = "anomaly_detection"
 
     requirements = ["pip::pooch", "tqdm"]
 
@@ -92,6 +94,6 @@ class Dataset(BaseDataset):
             y_train=None,
             X_test=X_test,
             y_test=y_test,
-            task="anomaly_detection",
+            task=self.task,
             metrics=list(AD_METRICS.keys()),
         )

@@ -173,6 +173,8 @@ class Dataset(BaseDataset):
     """
 
     name = "FEV"
+    # Read by the solvers' skip without loading the data.
+    task = "forecasting"
 
     requirements = ["pip::huggingface-hub"]
 
@@ -266,7 +268,7 @@ class Dataset(BaseDataset):
                 debug=self.debug,
             ),
             covariates=Covariates(),
-            task="forecasting",
+            task=self.task,
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
             freq=canonical_freq,

@@ -18,6 +18,8 @@ from benchopt import BaseDataset
 
 class Dataset(BaseDataset):
     name = "Dummy-Classification"
+    # Read by the solvers' skip without loading the data.
+    task = "classification"
 
     # Pure-numpy synthetic data — no external requirements, no network.
     requirements = []
@@ -68,7 +70,7 @@ class Dataset(BaseDataset):
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
-            task="classification",
+            task=self.task,
             metrics=["accuracy", "balanced_accuracy", "f1_weighted"],
             n_classes=self.n_classes,
         )
