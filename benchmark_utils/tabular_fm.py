@@ -121,14 +121,11 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
         quantiles=qs,
     )
 
-    outputs = []
-    for j, C in enumerate(shapes):
-        out = np.empty((prediction_length, C, len(qs)), dtype=np.float32)
-        for c in range(C):
-            grp = pred.xs(f"{j}:{c}", level="item_id")
-            out[:, c, :] = grp[qs].to_numpy()[:prediction_length]
-        outputs.append(out)
-    return outputs
+    # Rows in input order (tabicl sorts item ids), prediction_length per item.
+    ids = [f"{j}:{c}" for j, C in enumerate(shapes) for c in range(C)]
+    q = pred.loc[ids, qs].to_numpy(np.float32)
+    q = q.reshape(len(ids), prediction_length, len(qs)).transpose(1, 0, 2)
+    return np.split(q, np.cumsum(shapes)[:-1], axis=1)
 
 
 class TabularFMSolver(BaseTSFMSolver):

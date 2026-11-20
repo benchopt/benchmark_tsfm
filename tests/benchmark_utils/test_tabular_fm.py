@@ -32,6 +32,16 @@ def _predict_quantiles(model, X, levels):
     return np.tile(levels, (len(X), 1))
 
 
+class _MeanRegressor(BaseEstimator):
+    def fit(self, X, y):
+        self.mean_ = np.mean(y)
+        return self
+
+
+def _predict_mean(model, X, levels):
+    return np.full((len(X), len(levels)), model.mean_)
+
+
 def _forecaster(max_context_length=32):
     forecaster = TabICLForecaster(max_context_length=max_context_length)
     forecaster.predictor = _RegressorEngine(_ConstRegressor(), _predict_quantiles)
@@ -44,6 +54,16 @@ def test_forecast_windows_shapes_and_quantile_order():
     out = forecast_windows(_forecaster(), inputs, 5, QS, "D")
     assert [o.shape for o in out] == [(5, 2, len(QS)), (5, 1, len(QS))]
     np.testing.assert_allclose(out[0][2, 1], QS)
+
+
+def test_forecast_windows_keeps_series_and_channel_order():
+    # Over 10 series, so tabicl's string sort of item ids ("10:0" < "2:0") shows.
+    inputs = [np.full((20, 2), [j, j + 0.5]) for j in range(12)]
+    forecaster = TabICLForecaster(max_context_length=32)
+    forecaster.predictor = _RegressorEngine(_MeanRegressor(), _predict_mean)
+    out = forecast_windows(forecaster, inputs, 3, QS, "D")
+    for j, o in enumerate(out):
+        np.testing.assert_allclose(o[:, :, 0], [[j, j + 0.5]] * 3)
 
 
 def test_forecast_windows_very_short_history():
