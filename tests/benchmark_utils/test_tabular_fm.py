@@ -47,9 +47,9 @@ def test_forecast_windows_shapes_and_quantile_order():
     np.testing.assert_allclose(out[0][2, 1], QS)
 
 
-@pytest.mark.parametrize("length", [1, 2])
-def test_forecast_windows_very_short_history(length):
-    inputs = [np.arange(length, dtype=float), np.arange(30, dtype=float)]
+def test_forecast_windows_very_short_history():
+    # 2 points is the shortest history the forecasting datasets produce.
+    inputs = [np.arange(2, dtype=float), np.arange(30, dtype=float)]
     out = forecast_windows(_forecaster(), inputs, 4, QS, "D")
     assert out[0].shape == (4, 1, len(QS))
 

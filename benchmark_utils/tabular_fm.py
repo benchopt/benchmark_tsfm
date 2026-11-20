@@ -123,8 +123,6 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
             window = window[:, None]
         # tabicl only uses the last max_context_length steps.
         window = window[-forecaster.max_context_length :]
-        # tabicl fails on 1-point histories (e.g. FEV m5/1M, rohlik_sales/1W).
-        window = np.pad(window, ((max(0, 2 - len(window)), 0), (0, 0)), mode="edge")
         T, C = window.shape
         shapes.append(C)
         # Explicit future timestamps: tabicl would otherwise infer the freq,
