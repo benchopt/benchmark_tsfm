@@ -340,25 +340,9 @@ class BaseTSFMSolver(BaseSolver):
     def build_adapter(self, task: TaskType, model: Any) -> BaseTSFMAdapter:
         """Create and optionally fit a task-specific adapter.
 
-        Default strategies — the first capability the solver implements is used:
-
-        forecasting
-            1. forecast_batch  (zero-shot, via _SolverForecastAdapter)
-            2. embed_batch     (windowed ridge regression, via _WindowedForecastAdapter)
-        classification
-            1. embed_batch     (flat embedding + LinearProbeAdapter)
-            2. time_embed_batch (mean-pooled temporal embedding + LinearProbeAdapter)
-        anomaly_detection
-            1. embed_batch     (distance-from-mean score, via LinearProbeAdapter)
-            2. forecast_batch  (forecast-error score, via ForecastResidualAdapter)
-        event_detection
-            1. time_embed_batch (per-position LogReg, via _TimeEmbedEventAdapter)
-            2. embed_batch      (causal-windowed LogReg, via _WindowedEventAdapter)
-
-        Override this method if the model requires custom adapter logic.
-
-        # TODO: move this strategy documentation to a "how to add a model" docs
-        # page; also add a pointer from AGENTS.md for coding agents.
+        The default picks a strategy per task from the capabilities the
+        subclass overrides, see ``doc/adding_a_model.rst``. Override this
+        method if the model requires custom adapter logic.
 
         Parameters
         ----------
