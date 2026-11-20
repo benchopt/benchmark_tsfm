@@ -33,7 +33,9 @@ class Solver(TabularFMSolver):
         "inference_batch_size": [4096],
     }
 
-    quantiles_kwarg = "alphas"
+    @staticmethod
+    def predict_quantiles(model, X, levels):
+        return model.predict(X, output_type="quantiles", alphas=levels)
 
     def make_classifier(self, device):
         return TabICLClassifier(

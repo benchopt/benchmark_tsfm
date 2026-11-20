@@ -5,6 +5,7 @@ import pytest
 
 pytest.importorskip("tabicl.forecast")
 
+from sklearn.base import BaseEstimator  # noqa: E402
 from sklearn.neighbors import KNeighborsClassifier  # noqa: E402
 from tabicl.forecast import TabICLForecaster  # noqa: E402
 
@@ -22,38 +23,26 @@ from benchmark_utils.tabular_fm import (  # noqa: E402
 QS = list(CANONICAL_QUANTILE_LEVELS)
 
 
-class _ArrayRegressor:
-    """TabICL-style: predicts quantile level q as the constant q, (n, Q)."""
-
+class _ConstRegressor(BaseEstimator):
     def fit(self, X, y):
         return self
 
-    def predict(self, X, output_type, alphas):
-        return np.tile(alphas, (len(X), 1))
+
+def _predict_quantiles(model, X, levels):
+    """Predict quantile level q as the constant q."""
+    return np.tile(levels, (len(X), 1))
 
 
-class _ListRegressor(_ArrayRegressor):
-    """TabPFN-style: one array per quantile level."""
-
-    def predict(self, X, output_type, quantiles):
-        return [np.full(len(X), q) for q in quantiles]
-
-
-def _forecaster(regressor=None, quantiles_kwarg="alphas", max_context_length=32):
+def _forecaster(max_context_length=32):
     forecaster = TabICLForecaster(max_context_length=max_context_length)
-    forecaster.predictor = _RegressorEngine(
-        regressor or _ArrayRegressor(), quantiles_kwarg
-    )
+    forecaster.predictor = _RegressorEngine(_ConstRegressor(), _predict_quantiles)
     return forecaster
 
 
-@pytest.mark.parametrize(
-    "regressor, kwarg", [(_ArrayRegressor(), "alphas"), (_ListRegressor(), "quantiles")]
-)
-def test_forecast_windows_shapes_and_quantile_order(regressor, kwarg):
+def test_forecast_windows_shapes_and_quantile_order():
     rng = np.random.default_rng(0)
     inputs = [rng.normal(size=(40, 2)), rng.normal(size=50)]
-    out = forecast_windows(_forecaster(regressor, kwarg), inputs, 5, QS, "D")
+    out = forecast_windows(_forecaster(), inputs, 5, QS, "D")
     assert [o.shape for o in out] == [(5, 2, len(QS)), (5, 1, len(QS))]
     np.testing.assert_allclose(out[0][2, 1], QS)
 
@@ -66,9 +55,10 @@ def test_forecast_windows_very_short_history(length):
 
 
 def test_forecast_windows_long_yearly_history():
-    # 900 yearly steps from the synthetic anchor overflow pandas' range
-    # unless the history is trimmed to the context length first.
-    out = forecast_windows(_forecaster(), [np.ones(900)], 6, QS, "Y")
+    # 900 yearly steps from the synthetic anchor go past ns-precision's 2262.
+    out = forecast_windows(
+        _forecaster(max_context_length=1024), [np.ones(900)], 6, QS, "Y"
+    )
     assert out[0].shape == (6, 1, len(QS))
 
 
@@ -100,13 +90,13 @@ def test_safe_freq_warns_on_unusable_alias():
 
 class _FakeSolver(TabularFMSolver):
     name = "fake"
-    quantiles_kwarg = "alphas"
+    predict_quantiles = staticmethod(_predict_quantiles)
 
     def make_classifier(self, device):
         return KNeighborsClassifier(n_neighbors=1)
 
     def make_regressor(self):
-        return _ArrayRegressor()
+        return _ConstRegressor()
 
 
 def _fit(task, X_train, y_train=None, **meta):

@@ -63,14 +63,15 @@ Mapping to the API
 ------------------
 
 A new model is a solver file that subclasses ``TabularFMSolver``. It provides
-two estimators, and the base class wires them to the tasks.
+two estimators and one prediction hook, and the base class wires them to the
+tasks.
 
 =========================== ============================================
 Subclass provides           Used for
 =========================== ============================================
 ``make_classifier(device)`` classification, on the flattened rows
 ``make_regressor()``        forecasting, on the per-series tables
-``quantiles_kwarg``         the name of the regressor's quantile argument
+``predict_quantiles``       the ``(n, Q)`` quantiles of the fitted regressor
 =========================== ============================================
 
 Both estimators are returned unfitted. The base class fits them when it
@@ -89,7 +90,7 @@ Forecasting
 ~~~~~~~~~~~
 
 1. ``load_model`` builds a ``TabICLForecaster`` and replaces its predictor with
-   ``_RegressorEngine(regressor, quantiles_kwarg)``. The forecaster computes the
+   ``_RegressorEngine(regressor, predict_quantiles)``. The forecaster computes the
    features, and the engine fits and queries the regressor.
 2. ``run`` returns the generic forecasting adapter of ``BaseTSFMSolver``, with
    no training.
@@ -99,20 +100,22 @@ Forecasting
 4. ``forecast_batch`` calls ``forecast_windows``. It trims each window to
    ``max_context_length`` steps, builds timestamps for the history and the
    horizon, and calls ``predict_df`` on the forecaster.
-5. tabicl computes the features of each series and dispatches the series to
-   worker processes, one per GPU or up to 8 on CPU. In each worker,
-   ``_RegressorEngine._inference_routine`` fits a copy of the regressor on the
+5. tabicl computes the features of each series and runs
+   ``_RegressorEngine._inference_routine`` on each of them. It uses up to 8
+   loky processes on CPU, one process per GPU with several GPUs, and the main
+   process on a single GPU. The routine fits a clone of the regressor on the
    history rows and predicts the quantiles of the future rows:
 
    .. code-block:: python
 
-       model = copy.deepcopy(regressor).fit(train_X, train_y)
-       q = model.predict(test_X, output_type="quantiles", **{quantiles_kwarg: levels})
+       model = clone(regressor).fit(train_X, train_y)
+       q = predict_quantiles(model, test_X, levels)
 
-   ``q`` is an ``(n_test, Q)`` array, or a list of ``Q`` arrays.
+   ``predict_quantiles`` is where each subclass adapts its library's
+   prediction API. It returns an ``(n_test, Q)`` array.
 
-The regressor is sent to the workers by pickling, so it must be a plain
-library estimator, not a closure or a fitted model.
+The regressor is pickled to the loky processes, so it stays unfitted. Its
+weights load in each clone's ``fit``.
 
 Timing
 ~~~~~~
@@ -142,13 +145,15 @@ Write ``solvers/<model>.py`` as follows:
             "max_context_length": [512],
             "inference_batch_size": [4096],
         }
-        quantiles_kwarg = "quantiles"
-
         def make_classifier(self, device):
             return MyClassifier(device=device)
 
         def make_regressor(self):
             return MyRegressor()
+
+        @staticmethod
+        def predict_quantiles(model, X, levels):
+            return model.predict_quantiles(X, levels)
 
 ``name``, ``requirements`` and ``parameters`` must be literals in the solver
 file. benchopt reads them before the dependencies are installed, so they are
@@ -156,6 +161,7 @@ not inherited from the base class. ``tabicl[forecast]`` is always required,
 since it provides the forecasting pipeline.
 
 A model with no quantile predictions sets
-``supported_tasks = {"classification"}``, and its ``make_regressor``
-raises ``NotImplementedError``. A model with limits on the input overrides ``skip``, as
-``solvers/tabpfn.py`` does for more than 10 classes.
+``supported_tasks = {"classification"}``. Its ``make_regressor`` and
+``predict_quantiles`` raise ``NotImplementedError``. A model with limits on the
+input overrides ``skip``, as ``solvers/tabpfn.py`` does for more than 10
+classes.

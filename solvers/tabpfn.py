@@ -35,7 +35,11 @@ class Solver(TabularFMSolver):
         "inference_batch_size": [4096],
     }
 
-    quantiles_kwarg = "quantiles"
+    @staticmethod
+    def predict_quantiles(model, X, levels):
+        # One array per quantile level.
+        q = model.predict(X, output_type="quantiles", quantiles=levels)
+        return np.stack(q, axis=1)
 
     def skip(self):
         data = self.objective_.get_objective()

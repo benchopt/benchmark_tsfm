@@ -13,7 +13,6 @@ A new model subclasses :class:`TabularFMSolver`. ``doc/tabular_fm.rst``
 explains how its two hooks serve each task.
 """
 
-import copy
 import re
 import warnings
 from abc import abstractmethod
@@ -21,6 +20,7 @@ from abc import abstractmethod
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.base import clone
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer
 from tabicl.forecast import TabICLForecaster
@@ -29,10 +29,8 @@ from tabicl.forecast._engine import ForecastEngine, _to_numpy
 from benchmark_utils.base_solver import BaseTSFMSolver
 from benchmark_utils.forecasting_constants import CANONICAL_QUANTILE_LEVELS
 
-# Anchor for synthesized timestamps (see forecast_windows). Pandas'
-# ns-precision Timestamp ends in 2262, so yearly windows must stay under ~560
-# steps: forecast_windows trims the history to max_context_length to ensure it.
-SYNTH_TS_START = "1700-01-01"
+# Anchor for synthesized timestamps, in ms so long yearly windows stay in range.
+SYNTH_TS_START = "2000-01-01"
 
 # Pre-2.2 pandas aliases, rejected by pandas 3.
 _LEGACY_FREQ = {
@@ -53,25 +51,22 @@ def to_tabular(X):
 class _RegressorEngine(ForecastEngine):
     """tabicl ForecastEngine that fits a given regressor on each series.
 
-    Only the per-series inference routine changes; tabicl's feature
-    engineering and dispatch to workers are inherited. The regressor is
-    pickled to the workers, so it must be an unfitted library estimator.
+    Only the per-series inference routine changes. tabicl's SeriesDispatcher
+    runs it on each series in loky processes (up to 8 on CPU, one per GPU
+    with several GPUs) or in the main process on a single GPU. The engine is
+    pickled to those processes, so the regressor must be unfitted.
     """
 
-    def __init__(self, regressor, quantiles_kwarg):
+    def __init__(self, regressor, predict_quantiles):
         super().__init__()
         self._regressor = regressor
-        self._quantiles_kwarg = quantiles_kwarg
+        self._predict_quantiles = predict_quantiles
 
     def _inference_routine(self, train_X, train_y, test_X, quantiles=None):
         train_X, train_y, test_X = map(_to_numpy, (train_X, train_y, test_X))
-        # Fit a copy so the template never carries fitted weights to workers.
-        model = copy.deepcopy(self._regressor).fit(train_X, train_y)
-        q = model.predict(
-            test_X, output_type="quantiles", **{self._quantiles_kwarg: quantiles}
-        )
-        # TabPFN returns one array per quantile, TabICL an (n_test, Q) array.
-        q = np.stack(q, axis=1) if isinstance(q, list) else np.asarray(q)
+        # Fit a clone so the template never carries fitted weights.
+        model = clone(self._regressor).fit(train_X, train_y)
+        q = self._predict_quantiles(model, test_X, quantiles)  # (n_test, Q)
         # tabicl requires a point column; the benchmark only reads quantiles.
         result = {"target": q.mean(axis=1)}
         result.update({level: q[:, i] for i, level in enumerate(quantiles)})
@@ -91,7 +86,7 @@ def safe_freq(freq):
         mult, base, anchor = m.groups()
         freq = f"{mult}{_LEGACY_FREQ.get(base, base)}{anchor or ''}"
     try:
-        pd.date_range(SYNTH_TS_START, periods=2, freq=freq)
+        pd.date_range(SYNTH_TS_START, periods=2, freq=freq, unit="ms")
         return freq
     except (ValueError, TypeError):
         warnings.warn(f"Unusable freq {freq!r}, synthesizing hourly timestamps.")
@@ -126,16 +121,17 @@ def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, fre
         window = np.asarray(window, dtype=np.float32)
         if window.ndim == 1:
             window = window[:, None]
-        # tabicl only uses the last max_context_length steps: trimming here
-        # keeps the frames small and the synthetic timestamps in range.
+        # tabicl only uses the last max_context_length steps.
         window = window[-forecaster.max_context_length :]
-        # tabicl's seasonality detection needs at least 2 points.
+        # tabicl fails on 1-point histories (e.g. FEV m5/1M, rohlik_sales/1W).
         window = np.pad(window, ((max(0, 2 - len(window)), 0), (0, 0)), mode="edge")
         T, C = window.shape
         shapes.append(C)
         # Explicit future timestamps: tabicl would otherwise infer the freq,
         # which fails on histories shorter than 3 steps.
-        ts = pd.date_range(SYNTH_TS_START, periods=T + prediction_length, freq=freq)
+        ts = pd.date_range(
+            SYNTH_TS_START, periods=T + prediction_length, freq=freq, unit="ms"
+        )
         for c in range(C):
             item_id = f"{j}:{c}"
             context.append(
@@ -174,10 +170,9 @@ class TabularFMSolver(BaseTSFMSolver):
       inherited. ``requirements`` must include ``pip::tabicl[forecast]`` and
       ``parameters`` must define ``max_context_length``.
     - ``make_classifier(device)``: an unfitted scikit-learn classifier.
-    - ``make_regressor()``: an unfitted, picklable regressor whose
-      ``predict(X, output_type="quantiles", <quantiles_kwarg>=levels)``
-      returns an ``(n, Q)`` array or a list of ``Q`` arrays.
-    - ``quantiles_kwarg``: the name of that quantile-levels argument.
+    - ``make_regressor()``: an unfitted scikit-learn regressor.
+    - ``predict_quantiles(model, X, levels)``: a staticmethod returning the
+      ``(n, Q)`` quantiles predicted by the fitted regressor.
 
     A model without native quantiles sets ``supported_tasks`` to
     classification only.
@@ -199,20 +194,25 @@ class TabularFMSolver(BaseTSFMSolver):
     def make_regressor(self):
         """Return an unfitted regressor; tabicl assigns it a device per worker."""
 
+    @staticmethod
+    @abstractmethod
+    def predict_quantiles(model, X, levels):
+        """Return the ``(n, Q)`` quantiles of ``X`` at ``levels``."""
+
     def load_model(self, device, dtype):
         # Weights load lazily in fit(): fit a copy on a toy table so the
         # checkpoint download and load are not timed in run().
         X_toy, y_toy = np.random.default_rng(0).normal(size=(8, 2)), np.arange(8) % 2
         if self.task == "classification":
             classifier = self.make_classifier(device)
-            copy.deepcopy(classifier).fit(X_toy, y_toy)
+            clone(classifier).fit(X_toy, y_toy)
             # The model is itself the classifier, fitted on flat tabular rows.
             model = make_pipeline(FunctionTransformer(to_tabular), classifier)
         else:
             regressor = self.make_regressor()
-            copy.deepcopy(regressor).fit(X_toy, y_toy.astype(float))
+            clone(regressor).fit(X_toy, y_toy.astype(float))
             model = TabICLForecaster(max_context_length=self.max_context_length)
-            model.predictor = _RegressorEngine(regressor, self.quantiles_kwarg)
+            model.predictor = _RegressorEngine(regressor, self.predict_quantiles)
         return model
 
     def build_adapter(self, task, model):
