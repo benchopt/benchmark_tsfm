@@ -25,6 +25,30 @@ from benchmark_utils.covariates import Covariates
 MIN_CONTEXT = 6
 
 
+def impute_nan(series: np.ndarray) -> np.ndarray:
+    """Impute NaN targets as gluonts LastValueImputation, used by the
+    official GIFT-Eval notebooks: forward-fill each channel, flat-fill
+    leading NaNs with the first valid value, 0.0 for all-NaN channels.
+    """
+    # Arrow columns can decode to zero-copy read-only views: copy
+    # before writing in place.
+    if not series.flags.writeable and np.isnan(series).any():
+        series = series.copy()
+    for c in range(series.shape[1]):
+        col = series[:, c]
+        nan = np.isnan(col)
+        if not nan.any() or nan.all():
+            if nan.all():
+                col[:] = 0.0
+            continue
+        idx = np.where(nan, 0, np.arange(len(col)))
+        np.maximum.accumulate(idx, out=idx)
+        col[nan] = col[idx[nan]]
+        first = int(np.argmax(~nan))
+        col[:first] = col[first]
+    return series
+
+
 def make_forecasting_splits(
     series: List[np.ndarray],
     prediction_length: int,
@@ -91,6 +115,11 @@ def build_forecasting_data(
     mode). Windows with fewer than ``min_context`` history steps are skipped,
     and series with no window left are dropped.
 
+    NaN targets would propagate through solver histories and metrics, so
+    they are imputed with :func:`impute_nan`. Their locations are then
+    returned as ``nan_mask``, one ``(T_i, C)`` boolean array per series,
+    for the metrics to score the observed points only.
+
     ``y_train`` is ``None``: forecasting is self-supervised, so solvers
     that fine-tune carve their own (context, target) windows out of
     ``X_train`` — handing out a fixed pair would either leak the test
@@ -107,7 +136,8 @@ def build_forecasting_data(
         for i, ts in enumerate(series)
         if ts.shape[0] >= prediction_length + min_context
     ]
-    full_series = [series[i] for i in kept]
+    nan_mask = [np.isnan(series[i]) for i in kept]
+    full_series = [impute_nan(series[i]) for i in kept]
     X_train = [ts[: max(1, ts.shape[0] - test_len)] for ts in full_series]
 
     if not full_series:
@@ -128,4 +158,6 @@ def build_forecasting_data(
     )
     if covariates is not None:
         data["covariates"] = covariates.select(kept)
+    if any(m.any() for m in nan_mask):
+        data["nan_mask"] = nan_mask
     return data

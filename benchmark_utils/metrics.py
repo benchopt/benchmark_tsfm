@@ -88,8 +88,7 @@ def _seasonal_naive_scales_per_window(
             diff = np.abs(ctx[s:] - ctx[:-s])
             if nan_mask is not None:
                 nm = nan_mask[:cutoff]
-                valid = ~(nm[s:] | nm[:-s])
-                diff = np.where(valid[:, None], diff, np.nan)
+                diff = np.where(nm[s:] | nm[:-s], np.nan, diff)
                 # a channel with no valid diff gets a NaN scale, which
                 # drops its scaled errors downstream
                 with warnings.catch_warnings():
@@ -211,19 +210,16 @@ def windows_valid_mask(
     target_shape: tuple[int, ...],
 ) -> np.ndarray:
     """Validity mask of the (M, H, C) target array: False on the points
-    that were imputed in the original targets. Takes the per-series NaN
-    masks and the jagged cutoffs, in the flattened series-major /
-    cutoff-minor window order; the per-step validity broadcasts over
-    channels."""
-    valid = np.ones(target_shape[:2], dtype=bool)
+    that were imputed in the original targets. Takes the per-series
+    (T, C) NaN masks and the jagged cutoffs, in the flattened
+    series-major / cutoff-minor window order."""
+    valid = np.ones(target_shape, dtype=bool)
     i = 0
     for nan_mask, cutoffs in zip(nan_masks, cutoff_indexes):
         for cutoff in cutoffs:
             valid[i] = ~nan_mask[cutoff : cutoff + target_shape[1]]
             i += 1
-    mask = np.empty(target_shape, dtype=bool)
-    mask[:] = valid[:, :, None]
-    return mask
+    return valid
 
 
 def smape(
