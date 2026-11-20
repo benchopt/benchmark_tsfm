@@ -61,3 +61,17 @@ class TestChannelSelection:
             "OT": [np.array([]), np.array([1.0, 2.0])],
         })
         assert fev._select_channel_cols(df) == ["OT"]
+
+
+@pytest.mark.parametrize(
+    "target, expected", [("sales", ["sales"]), (["a", "b"], ["a", "b"])]
+)
+def test_task_target_gives_channels(target, expected):
+    df = pd.DataFrame({"id": ["a"], "target": [np.array([1.0])]})
+    assert fev._select_channel_cols(df, target) == expected
+
+
+def test_every_fev_bench_task_has_hf_data():
+    assert {t["dataset_config"] for t in fev._fev_bench_tasks().values()} <= set(
+        fev._HF_PATHS
+    )
