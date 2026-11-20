@@ -188,6 +188,8 @@ class Dataset(BaseDataset):
     """
 
     name = "MITDB"
+    # Read by the solvers' skip without loading the data.
+    task = "event_detection"
 
     requirements = ["wfdb"]
 
@@ -248,7 +250,7 @@ class Dataset(BaseDataset):
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
-            task="event_detection",
+            task=self.task,
             metrics=["map_iou"],
             n_classes=self.n_classes,
         )

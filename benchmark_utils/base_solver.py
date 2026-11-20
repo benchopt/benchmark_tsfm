@@ -444,7 +444,7 @@ class BaseTSFMSolver(BaseSolver):
 
     def skip(self) -> str | None:
         """Skip unsupported tasks."""
-        task = self.objective_.get_objective()["task"]
+        task = self.dataset_.task
         reason = None
         if task not in self.supported_tasks:
             reason = f"{self.name} solver does not support task={task!r}"

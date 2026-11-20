@@ -112,20 +112,6 @@ class Objective(BaseObjective):
         self.metrics = metrics
         self.meta = meta  # freq, prediction_length, n_classes, …
 
-    def skip(self, **data):
-        """Honor a ``_skip_reason`` field set by the dataset.
-
-        Datasets that want to filter their own parameter grid (e.g.
-        :mod:`datasets.gifteval` skipping non-leaderboard (path, term)
-        combos) return ``dict(_skip_reason="...")`` from ``get_data()``.
-        benchopt calls this hook *before* ``set_data`` and returns early
-        on skip, so no other data field is needed or consumed.
-        """
-        reason = data.get("_skip_reason")
-        if reason:
-            return True, reason
-        return False, None
-
     # ------------------------------------------------------------------
     # Passed to the solver
     # ------------------------------------------------------------------

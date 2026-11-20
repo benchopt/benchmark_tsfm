@@ -105,10 +105,11 @@ class Solver(BaseSolver):
         "season_length": ["auto"],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"SeasonalNaive does not support task={task!r}"
-        return False, None
+    def skip(self):
+        reason = None
+        if self.dataset_.task not in SUPPORTED_TASKS:
+            reason = f"SeasonalNaive does not support task={self.dataset_.task!r}"
+        return reason
 
     def set_objective(self, X_train, y_train, task, **meta):
         self.task = task
