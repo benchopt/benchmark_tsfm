@@ -177,7 +177,7 @@ class TabularFMSolver(BaseTSFMSolver):
     def load_model(self, device, dtype):
         # Weights load lazily in fit(): fit a copy on a toy table so the
         # checkpoint download and load are not timed in run().
-        X_toy, y_toy = np.random.default_rng(0).normal(size=(8, 2)), np.arange(8) % 2
+        X_toy, y_toy = np.arange(16.0).reshape(8, 2), np.arange(8) % 2
         if self.task == "classification":
             classifier = self.make_classifier(device)
             clone(classifier).fit(X_toy, y_toy)
