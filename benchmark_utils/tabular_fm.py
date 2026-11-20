@@ -5,11 +5,12 @@ These models predict by in-context learning on a table of rows.
 - **Classification** flattens each ``(T, C)`` sample into a ``(T*C,)`` row and
   fits the model's classifier on the training rows.
 - **Forecasting** recasts each series as tabular regression on
-  timestamp-derived features (calendar / Fourier / auto-seasonal / index),
+  timestamp-derived features (index / calendar / auto-seasonal),
   reusing tabicl's forecasting pipeline (``tabicl.forecast``) with the model's
   own regressor plugged in through :class:`_RegressorEngine`.
 
-A new model subclasses :class:`TabularFMSolver`.
+A new model subclasses :class:`TabularFMSolver`. ``doc/tabular_fm.rst``
+explains how its two hooks serve each task.
 """
 
 import copy

@@ -458,11 +458,13 @@ class BaseTSFMSolver(BaseSolver):
             case _:
                 raise NotImplementedError(f"Unknown task: {task!r}")
 
-    def skip(self, task: TaskType, **_: Any) -> tuple[bool, str | None]:
+    def skip(self) -> str | None:
         """Skip unsupported tasks."""
+        task = self.objective_.get_objective()["task"]
+        reason = None
         if task not in self.supported_tasks:
-            return True, f"{self.name} solver does not support task={task!r}"
-        return False, None
+            reason = f"{self.name} solver does not support task={task!r}"
+        return reason
 
     def set_objective(
         self,

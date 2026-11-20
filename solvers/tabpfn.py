@@ -37,10 +37,11 @@ class Solver(TabularFMSolver):
 
     quantiles_kwarg = "quantiles"
 
-    def skip(self, task, y_train=None, **kwargs):
-        if task == "classification" and len(np.unique(y_train)) > 10:
-            return True, f"{self.name} supports at most 10 classes"
-        return super().skip(task, **kwargs)
+    def skip(self):
+        data = self.objective_.get_objective()
+        if data["task"] == "classification" and len(np.unique(data["y_train"])) > 10:
+            return f"{self.name} supports at most 10 classes"
+        return super().skip()
 
     def make_classifier(self, device):
         # "auto" spreads the ensemble over all visible GPUs.
