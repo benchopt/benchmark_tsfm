@@ -17,7 +17,6 @@ from benchmark_utils.tabular_fm import (  # noqa: E402
     TabularFMSolver,
     _RegressorEngine,
     forecast_windows,
-    safe_freq,
 )
 
 QS = list(CANONICAL_QUANTILE_LEVELS)
@@ -60,32 +59,6 @@ def test_forecast_windows_long_yearly_history():
         _forecaster(max_context_length=1024), [np.ones(900)], 6, QS, "Y"
     )
     assert out[0].shape == (6, 1, len(QS))
-
-
-@pytest.mark.parametrize(
-    "alias, expected",
-    [
-        ("A-DEC", "YE-DEC"),
-        ("Y", "YE"),
-        ("Q", "QE"),
-        ("M", "ME"),
-        ("H", "h"),
-        ("6H", "6h"),
-        ("5T", "5min"),
-        ("4S", "4s"),
-        ("W-SUN", "W-SUN"),
-        ("D", "D"),
-        ("QS-OCT", "QS-OCT"),
-        (None, "h"),
-    ],
-)
-def test_safe_freq_normalizes_legacy_aliases(alias, expected):
-    assert safe_freq(alias) == expected
-
-
-def test_safe_freq_warns_on_unusable_alias():
-    with pytest.warns(UserWarning, match="freq"):
-        assert safe_freq("not-a-freq") == "h"
 
 
 class _FakeSolver(TabularFMSolver):

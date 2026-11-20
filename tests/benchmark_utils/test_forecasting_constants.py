@@ -7,6 +7,7 @@ from benchmark_utils.forecasting_constants import (
     from_pandas,
     gift_eval_prediction_length,
     gift_eval_seasonality,
+    safe_freq,
 )
 
 
@@ -98,3 +99,29 @@ def test_gift_eval_prediction_length_m4():
     assert gift_eval_prediction_length("W", "short", "m4_weekly/W") == 13
     assert gift_eval_prediction_length("D", "short", "m4_daily/D") == 14
     assert gift_eval_prediction_length("H", "short", "m4_hourly/H") == 48
+
+
+@pytest.mark.parametrize(
+    "alias, expected",
+    [
+        ("A-DEC", "YE-DEC"),
+        ("Y", "YE"),
+        ("Q", "QE"),
+        ("M", "ME"),
+        ("H", "h"),
+        ("6H", "6h"),
+        ("5T", "5min"),
+        ("4S", "4s"),
+        ("W-SUN", "W-SUN"),
+        ("D", "D"),
+        ("QS-OCT", "QS-OCT"),
+        (None, "h"),
+    ],
+)
+def test_safe_freq_normalizes_legacy_aliases(alias, expected):
+    assert safe_freq(alias) == expected
+
+
+def test_safe_freq_warns_on_unusable_alias():
+    with pytest.warns(UserWarning, match="freq"):
+        assert safe_freq("not-a-freq") == "h"

@@ -22,8 +22,8 @@ class Solver(TabularFMSolver):
     requirements = ["pip::tabicl[forecast]"]
 
     parameters = {
-        # Classification only: forecasting uses the default regressor ckpt.
-        "checkpoint_version": ["tabicl-classifier-v2-20260212.ckpt"],
+        # Checkpoint release, for both the classifier and the regressor.
+        "version": ["v2-20260212"],
         "n_estimators": [8],
         # A short context keeps per-series fitting tractable; the temporal
         # features already encode seasonality.
@@ -39,7 +39,7 @@ class Solver(TabularFMSolver):
 
     def make_classifier(self, device):
         return TabICLClassifier(
-            checkpoint_version=self.checkpoint_version,
+            checkpoint_version=f"tabicl-classifier-{self.version}.ckpt",
             n_estimators=self.n_estimators,
             device=device,
             random_state=42,
@@ -47,4 +47,7 @@ class Solver(TabularFMSolver):
         )
 
     def make_regressor(self):
-        return TabICLRegressor(n_estimators=self.n_estimators)
+        return TabICLRegressor(
+            checkpoint_version=f"tabicl-regressor-{self.version}.ckpt",
+            n_estimators=self.n_estimators,
+        )

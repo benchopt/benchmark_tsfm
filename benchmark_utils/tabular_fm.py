@@ -13,8 +13,6 @@ A new model subclasses :class:`TabularFMSolver`. ``doc/tabular_fm.rst``
 explains how its two hooks serve each task.
 """
 
-import re
-import warnings
 from abc import abstractmethod
 
 import numpy as np
@@ -24,20 +22,16 @@ from sklearn.base import clone
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer
 from tabicl.forecast import TabICLForecaster
-from tabicl.forecast._engine import ForecastEngine, _to_numpy
+from tabicl.forecast._engine import ForecastEngine
 
 from benchmark_utils.base_solver import BaseTSFMSolver
-from benchmark_utils.forecasting_constants import CANONICAL_QUANTILE_LEVELS
+from benchmark_utils.forecasting_constants import (
+    CANONICAL_QUANTILE_LEVELS,
+    safe_freq,
+)
 
 # Anchor for synthesized timestamps, in ms so long yearly windows stay in range.
 SYNTH_TS_START = "2000-01-01"
-
-# Pre-2.2 pandas aliases, rejected by pandas 3.
-_LEGACY_FREQ = {
-    "A": "YE", "Y": "YE", "AS": "YS", "Q": "QE", "M": "ME",
-    "H": "h", "T": "min", "S": "s", "L": "ms", "U": "us", "N": "ns",
-}  # fmt: skip
-_FREQ_RE = re.compile(r"^(\d*)([A-Za-z]+)(-\w+)?$")
 
 
 def to_tabular(X):
@@ -63,7 +57,6 @@ class _RegressorEngine(ForecastEngine):
         self._predict_quantiles = predict_quantiles
 
     def _inference_routine(self, train_X, train_y, test_X, quantiles=None):
-        train_X, train_y, test_X = map(_to_numpy, (train_X, train_y, test_X))
         # Fit a clone so the template never carries fitted weights.
         model = clone(self._regressor).fit(train_X, train_y)
         q = self._predict_quantiles(model, test_X, quantiles)  # (n_test, Q)
@@ -71,26 +64,6 @@ class _RegressorEngine(ForecastEngine):
         result = {"target": q.mean(axis=1)}
         result.update({level: q[:, i] for i, level in enumerate(quantiles)})
         return result
-
-
-def safe_freq(freq):
-    """Return a pandas-usable frequency alias, defaulting to hourly.
-
-    The benchmark ForecastInput carries no timestamps, so we synthesize a
-    regular index for the temporal encoders. Legacy aliases are mapped to
-    their current spelling, and an unusable alias falls back with a warning.
-    """
-    if not freq:
-        return "h"
-    if m := _FREQ_RE.match(freq):
-        mult, base, anchor = m.groups()
-        freq = f"{mult}{_LEGACY_FREQ.get(base, base)}{anchor or ''}"
-    try:
-        pd.date_range(SYNTH_TS_START, periods=2, freq=freq, unit="ms")
-        return freq
-    except (ValueError, TypeError):
-        warnings.warn(f"Unusable freq {freq!r}, synthesizing hourly timestamps.")
-        return "h"
 
 
 def forecast_windows(forecaster, inputs, prediction_length, quantile_levels, freq):
@@ -206,17 +179,19 @@ class TabularFMSolver(BaseTSFMSolver):
             clone(classifier).fit(X_toy, y_toy)
             # The model is itself the classifier, fitted on flat tabular rows.
             model = make_pipeline(FunctionTransformer(to_tabular), classifier)
-        else:
+        elif self.task == "forecasting":
             regressor = self.make_regressor()
             clone(regressor).fit(X_toy, y_toy.astype(float))
             model = TabICLForecaster(max_context_length=self.max_context_length)
             model.predictor = _RegressorEngine(regressor, self.predict_quantiles)
+        else:
+            raise ValueError(f"{self.name} does not support task {self.task!r}")
         return model
 
     def build_adapter(self, task, model):
-        if task != "classification":
-            return super().build_adapter(task, model)
-        return model.fit(self.X_train, np.asarray(self.y_train))
+        if task == "classification":
+            return model.fit(self.X_train, np.asarray(self.y_train))
+        return super().build_adapter(task, model)
 
     def forecast_batch(self, inputs, covariates, prediction_length):
         preds = forecast_windows(
