@@ -75,3 +75,26 @@ def test_every_fev_bench_task_has_hf_data():
     assert {t["dataset_config"] for t in fev._fev_bench_tasks().values()} <= set(
         fev._HF_PATHS
     )
+
+
+def test_covariate_columns_are_not_channels():
+    df = pd.DataFrame({
+        "id": ["a"],
+        "load": [np.array([1.0, 2.0])],
+        "temperature": [np.array([3.0, 4.0])],
+    })
+    assert fev._select_channel_cols(df, None, ["temperature"]) == ["load"]
+
+
+def test_covariates_encode_categories_as_codes():
+    df = pd.DataFrame({
+        "store": ["x", "y", "x"],
+        "promo": [np.array([0, 1]), np.array([1, 1, 0]), np.array([0])],
+        "holiday": [np.array(["a", "0"]), np.array(["0", "0", "b"]), np.array(["a"])],
+    })
+    static = fev._static_covariates(df, ["store"])
+    assert [s.tolist() for s in static] == [[0.0], [1.0], [0.0]]
+    dynamic = fev._dynamic_covariates(df, ["promo", "holiday"])
+    assert [a.shape for a in dynamic] == [(2, 2), (3, 2), (1, 2)]
+    np.testing.assert_array_equal(dynamic[1], [[1, 1], [1, 1], [0, 2]])
+    assert fev._dynamic_covariates(df, None) is None

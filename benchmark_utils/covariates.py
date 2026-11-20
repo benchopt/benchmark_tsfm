@@ -53,6 +53,15 @@ class Covariates:
                 return len(f)
         return 0
 
+    def select(self, series_idx: Sequence[int]) -> "Covariates":
+        """Covariates of the series at ``series_idx``, in that order."""
+        return Covariates(
+            *(
+                None if f is None else [f[i] for i in series_idx]
+                for f in (self.static_covars, self.hist_covars, self.future_covars)
+            )
+        )
+
     def slice(self, series_idx: int, cutoff: int, horizon: int) -> "Covariates":
         """Covariates for a single ``(series, cutoff)`` window.
 

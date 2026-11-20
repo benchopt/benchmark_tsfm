@@ -23,9 +23,14 @@ Each parquet row is one series; columns vary:
 ``dataset_name`` is a fev-bench task (``benchmarks/fev_bench/tasks.yaml`` in
 github.com/autogluon/fev). Its target columns, horizon, number of windows,
 minimum context and seasonality follow the task. The rolling windows match
-:mod:`datasets.monash`. Unlike fev-bench, the covariates are not used, the
-windows of the 4 rohlik tasks end at the end of each series instead of starting
-at their ``initial_cutoff`` date, and the metrics are the benchmark's.
+:mod:`datasets.monash`. Unlike fev-bench, the windows of the 4 rohlik tasks
+end at the end of each series instead of starting at their ``initial_cutoff``
+date, and the metrics are the benchmark's.
+
+The task's covariate columns are exposed as :class:`Covariates`:
+``past_dynamic_columns`` as ``hist_covars``, ``known_dynamic_columns`` as
+``future_covars`` and ``static_columns`` as ``static_covars``. Dynamic arrays
+span the whole series, and categorical values are encoded as integer codes.
 """
 
 import functools
@@ -151,13 +156,14 @@ def _fev_bench_tasks() -> "dict[str, dict]":
     return {t.get("task_name", t["dataset_config"]): t for t in tasks}
 
 
-def _select_channel_cols(df, target=None) -> "list[str]":
+def _select_channel_cols(df, target=None, covariate_cols=()) -> "list[str]":
     """Columns to stack as forecast channels.
 
     The task's ``target`` (one column or a list) gives the channels. Without
     it, an explicit ``target`` column is the sole target, as other numeric
     array columns are exogenous covariates (e.g. the epf_* load forecasts).
-    Without either (e.g. ETT), every numeric array column is a channel.
+    Without either (e.g. ETT), every numeric array column that is not one of
+    the task's ``covariate_cols`` is a channel.
     """
     if target is not None:
         return [target] if isinstance(target, str) else list(target)
@@ -165,8 +171,36 @@ def _select_channel_cols(df, target=None) -> "list[str]":
         return ["target"]
     return [
         c for c in df.columns
-        if c not in _METADATA_COLS and _is_numeric_array_col(df, c)
+        if c not in (*_METADATA_COLS, *covariate_cols)
+        and _is_numeric_array_col(df, c)
     ]
+
+
+def _encode(values) -> np.ndarray:
+    """Float values of a covariate column, categories as integer codes."""
+    values = pd.Series(values)
+    try:
+        return pd.to_numeric(values).to_numpy(np.float32)
+    except (ValueError, TypeError):
+        codes = pd.factorize(values)[0]  # -1 for missing values
+        return np.where(codes < 0, np.nan, codes).astype(np.float32)
+
+
+def _dynamic_covariates(df, cols) -> "list[np.ndarray] | None":
+    """Per-series ``(T, len(cols))`` arrays of the dynamic columns ``cols``."""
+    if not cols:
+        return None
+    lengths = df[cols[0]].map(len).to_numpy()
+    split = np.cumsum(lengths)[:-1]
+    columns = [np.split(_encode(np.concatenate(df[c].to_numpy())), split) for c in cols]
+    return [np.stack(arrays, axis=-1) for arrays in zip(*columns)]
+
+
+def _static_covariates(df, cols) -> "list[np.ndarray] | None":
+    """Per-series ``(len(cols),)`` arrays of the static columns ``cols``."""
+    if not cols:
+        return None
+    return list(np.stack([_encode(df[c]) for c in cols], axis=-1))
 
 
 # fev-bench dataset_config → HF directory path.
@@ -249,7 +283,12 @@ class Dataset(BaseDataset):
         if df.empty:
             raise ValueError(f"{self.dataset_name!r} contained 0 series.")
 
-        channel_cols = _select_channel_cols(df, task.get("target"))
+        covariate_cols = [
+            c
+            for key in ("past_dynamic_columns", "known_dynamic_columns")
+            for c in task.get(key, [])
+        ]
+        channel_cols = _select_channel_cols(df, task.get("target"), covariate_cols)
         if not channel_cols:
             raise ValueError(
                 f"{self.dataset_name!r} has no channel columns "
@@ -267,16 +306,23 @@ class Dataset(BaseDataset):
 
         # Build (T, C) series. Each row's per-channel array has the same
         # length (T_i); stack on the last axis.
-        series_list = []
-        for _, row in df.iterrows():
+        series_list, kept = [], []
+        for i, (_, row) in enumerate(df.iterrows()):
             channels = [np.asarray(row[c], dtype=np.float32) for c in channel_cols]
             T = channels[0].shape[0]
             if any(ch.shape[0] != T for ch in channels):
                 continue
             series_list.append(np.stack(channels, axis=-1))
+            kept.append(i)
 
         if not series_list:
             raise ValueError("All series were skipped (inconsistent channel lengths).")
+
+        covariates = Covariates(
+            static_covars=_static_covariates(df, task.get("static_columns")),
+            hist_covars=_dynamic_covariates(df, task.get("past_dynamic_columns")),
+            future_covars=_dynamic_covariates(df, task.get("known_dynamic_columns")),
+        ).select(kept)
 
         return dict(
             **build_forecasting_data(
@@ -286,8 +332,8 @@ class Dataset(BaseDataset):
                 debug=self.debug,
                 # fev-bench's own minimum, but never below the benchmark's.
                 min_context=max(task.get("min_context_length", 1), MIN_CONTEXT),
+                covariates=covariates,
             ),
-            covariates=Covariates(),
             task=self.task,
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,

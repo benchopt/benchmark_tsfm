@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.windowing import build_forecasting_data
 
 
@@ -53,3 +54,14 @@ def test_debug_uses_single_window():
     # Train cut still reserves n_windows, but only one window is evaluated.
     assert d["X_train"][0].shape == (80, 1)
     assert d["cutoff_indexes"][0] == [90]
+
+
+def test_covariates_follow_kept_series():
+    hist = [np.full((T, 1), T, dtype=np.float32) for T in (5, 40, 50)]
+    d = build_forecasting_data(
+        [_series(5), _series(40), _series(50)],
+        prediction_length=10,
+        covariates=Covariates(hist_covars=hist),
+    )
+    assert [h[0, 0] for h in d["covariates"].hist_covars] == [40, 50]
+    assert d["covariates"].future_covars is None
