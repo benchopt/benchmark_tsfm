@@ -199,16 +199,20 @@ class TabularFMSolver(BaseTSFMSolver):
         """Return an unfitted regressor; tabicl assigns it a device per worker."""
 
     def load_model(self, device, dtype):
+        # Weights load lazily in fit(): fit a copy on a toy table so the
+        # checkpoint download and load are not timed in run().
+        X_toy, y_toy = np.random.default_rng(0).normal(size=(8, 2)), np.arange(8) % 2
         if self.task == "classification":
+            classifier = self.make_classifier(device)
+            copy.deepcopy(classifier).fit(X_toy, y_toy)
             # The model is itself the classifier, fitted on flat tabular rows.
-            return make_pipeline(
-                FunctionTransformer(to_tabular), self.make_classifier(device)
-            )
-        forecaster = TabICLForecaster(max_context_length=self.max_context_length)
-        forecaster.predictor = _RegressorEngine(
-            self.make_regressor(), self.quantiles_kwarg
-        )
-        return forecaster
+            model = make_pipeline(FunctionTransformer(to_tabular), classifier)
+        else:
+            regressor = self.make_regressor()
+            copy.deepcopy(regressor).fit(X_toy, y_toy.astype(float))
+            model = TabICLForecaster(max_context_length=self.max_context_length)
+            model.predictor = _RegressorEngine(regressor, self.quantiles_kwarg)
+        return model
 
     def build_adapter(self, task, model):
         if task != "classification":

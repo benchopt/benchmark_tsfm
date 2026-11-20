@@ -11,6 +11,7 @@ References:
     https://doi.org/10.1038/s41586-024-08328-6
 """
 
+import numpy as np
 from tabpfn import TabPFNClassifier, TabPFNRegressor
 from tabpfn.constants import ModelVersion
 
@@ -35,6 +36,11 @@ class Solver(TabularFMSolver):
     }
 
     quantiles_kwarg = "quantiles"
+
+    def skip(self, task, y_train=None, **kwargs):
+        if task == "classification" and len(np.unique(y_train)) > 10:
+            return True, f"{self.name} supports at most 10 classes"
+        return super().skip(task, **kwargs)
 
     def make_classifier(self, device):
         # "auto" spreads the ensemble over all visible GPUs.
