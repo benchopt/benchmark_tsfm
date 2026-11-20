@@ -19,6 +19,8 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+from benchmark_utils.covariates import Covariates
+
 # Shortest history to forecast from, as fev-bench's m5_1M task.
 MIN_CONTEXT = 6
 
@@ -79,6 +81,7 @@ def build_forecasting_data(
     n_windows: int = 1,
     debug: bool = False,
     min_context: int = MIN_CONTEXT,
+    covariates: Optional[Covariates] = None,
 ) -> dict:
     """Build the shared train/test split fields of a forecasting data dict.
 
@@ -95,15 +98,17 @@ def build_forecasting_data(
 
     Returns a dict with ``X_train``, ``y_train``, ``X_test``, ``y_test``
     and ``cutoff_indexes``; datasets add their task-specific fields
-    (metrics, freq, seasonality, ...) on top.
+    (metrics, freq, seasonality, ...) on top. Given ``covariates`` for every
+    series, it also returns them for the kept series.
     """
     test_len = prediction_length * n_windows
-    X_train, full_series = [], []
-    for ts in series:
-        if ts.shape[0] < prediction_length + min_context:
-            continue
-        X_train.append(ts[:max(1, ts.shape[0] - test_len)])
-        full_series.append(ts)
+    kept = [
+        i
+        for i, ts in enumerate(series)
+        if ts.shape[0] >= prediction_length + min_context
+    ]
+    full_series = [series[i] for i in kept]
+    X_train = [ts[: max(1, ts.shape[0] - test_len)] for ts in full_series]
 
     if not full_series:
         raise ValueError("All series are shorter than prediction_length.")
@@ -114,10 +119,13 @@ def build_forecasting_data(
         n_windows=1 if debug else n_windows,
         min_context=min_context,
     )
-    return dict(
+    data = dict(
         X_train=X_train,
         y_train=None,
         X_test=X_test,
         y_test=y_test,
         cutoff_indexes=cutoff_indexes,
     )
+    if covariates is not None:
+        data["covariates"] = covariates.select(kept)
+    return data
