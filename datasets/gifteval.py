@@ -24,10 +24,8 @@ from the leaderboard's results CSV (fetched from the HF Space
 ``Salesforce/GIFT-Eval`` by ``prepare`` or on first use, and stored as a
 small CSV under benchopt's data path) and gates runs at the dataset
 level: when
-``(dataset_name, term)`` is not canonical, ``get_data()`` short-circuits
-and returns a placeholder dict carrying a ``_skip_reason`` field.
-:meth:`Objective.skip` (see ``objective.py``) honors that field and
-skips the combo cleanly.
+``(dataset_name, term)`` is not canonical, :meth:`Dataset.skip` skips the
+combo before any data is loaded.
 
 So:
 
@@ -214,12 +212,6 @@ def _hf_arrow_directory(leaderboard_path: str) -> str:
     return hf_name
 
 
-def _skip_placeholder(reason: str) -> dict:
-    """Flag the combo for skipping via ``Objective.skip``, which benchopt
-    calls before ``set_data`` — no other data field is needed."""
-    return dict(_skip_reason=reason)
-
-
 def _to_time_major(values: np.ndarray) -> np.ndarray:
     """Re-shape a covariate entry as ``(T, C)``, mirroring ``target``."""
     values = np.asarray(values, dtype=np.float32)
@@ -271,9 +263,9 @@ class Dataset(BaseDataset):
         ``benchopt info -v``.
     term : str
         ``"short"`` / ``"medium"`` / ``"long"``. Combos not on the
-        leaderboard are skipped (placeholder + objective
-        ``skip``), so ``dataset_name=all, term=long`` runs only the 21
-        paths that define ``long``.
+        leaderboard are skipped by ``skip``, so
+        ``dataset_name=all, term=long`` runs only the 21 paths that define
+        ``long``.
     prediction_length : int or None
         Explicit override. ``None`` → resolved from (freq, term) via
         :func:`benchmark_utils.forecasting_constants.gift_eval_prediction_length`.
@@ -289,6 +281,8 @@ class Dataset(BaseDataset):
     """
 
     name = "GiftEval"
+    # Read by the solvers' skip without loading the data.
+    task = "forecasting"
 
     requirements = ["pip::datasets", "pip::huggingface-hub"]
 
@@ -350,14 +344,16 @@ class Dataset(BaseDataset):
             max(1, math.ceil(GIFT_EVAL_TEST_SPLIT * min_len / pred_len)),
         )
 
-    def get_data(self):
-        # Short-circuit non-canonical combos so heavy parsing doesn't run.
+    def skip(self):
+        reason = None
         if self.term not in _leaderboard().get(self.dataset_name, ()):
-            return _skip_placeholder(
+            reason = (
                 f"non-canonical GIFT-Eval combo: {self.dataset_name!r} does "
                 f"not define term {self.term!r} on the leaderboard"
             )
+        return reason
 
+    def get_data(self):
         from datasets import Dataset as HFDataset, concatenate_datasets
 
         arrow_files = self._snapshot()
@@ -446,7 +442,7 @@ class Dataset(BaseDataset):
                 if hist_covars
                 else Covariates()
             ),
-            task="forecasting",
+            task=self.task,
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
             freq=pandas_freq,

@@ -28,9 +28,6 @@ def test_model_id():
 def test_forecasting_only():
     solver = Solver.get_instance()
     assert solver.supported_tasks == {"forecasting"}
-    assert solver.skip("classification")[0]
-    assert solver.skip("anomaly_detection")[0]
-    assert not solver.skip("forecasting")[0]
 
 
 NATIVE_FAN = tuple(

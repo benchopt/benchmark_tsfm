@@ -62,7 +62,7 @@ from benchmark_utils.metrics import (  # noqa: F401  (re-exported)
 class Objective(BaseObjective):
     name = "TSFM Benchmark"
     url = "https://github.com/benchopt/benchmark_tsfm"
-    min_benchopt_version = "1.9.2"
+    min_benchopt_version = "1.10.1"
 
     # Shared requirements across ALL solvers — solvers declare model-specific
     # extras in their own ``requirements`` list.
@@ -111,20 +111,6 @@ class Objective(BaseObjective):
         self.task = task
         self.metrics = metrics
         self.meta = meta  # freq, prediction_length, n_classes, …
-
-    def skip(self, **data):
-        """Honor a ``_skip_reason`` field set by the dataset.
-
-        Datasets that want to filter their own parameter grid (e.g.
-        :mod:`datasets.gifteval` skipping non-leaderboard (path, term)
-        combos) return ``dict(_skip_reason="...")`` from ``get_data()``.
-        benchopt calls this hook *before* ``set_data`` and returns early
-        on skip, so no other data field is needed or consumed.
-        """
-        reason = data.get("_skip_reason")
-        if reason:
-            return True, reason
-        return False, None
 
     # ------------------------------------------------------------------
     # Passed to the solver

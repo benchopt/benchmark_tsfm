@@ -33,9 +33,7 @@ def test_parse_leaderboard_csv(tmp_path):
 def test_non_canonical_combo_skips(monkeypatch):
     monkeypatch.setattr(gifteval, "_leaderboard_cache", {"m4_weekly/W": ("short",)})
     ds = Dataset.get_instance(dataset_name="m4_weekly/W", term="long")
-    data = ds.get_data()
-    assert set(data) == {"_skip_reason"}
-    assert "does not define term 'long'" in data["_skip_reason"]
+    assert "does not define term 'long'" in ds.skip()
 
 
 def test_hf_arrow_directory():

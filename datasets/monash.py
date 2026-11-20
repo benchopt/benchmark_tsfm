@@ -56,6 +56,8 @@ class Dataset(BaseDataset):
     """
 
     name = "Monash"
+    # Read by the solvers' skip without loading the data.
+    task = "forecasting"
 
     # aeon is already a requirement of the objective
     requirements = []
@@ -111,7 +113,7 @@ class Dataset(BaseDataset):
                 debug=self.debug,
             ),
             covariates=Covariates(),
-            task="forecasting",
+            task=self.task,
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
             freq=freq,

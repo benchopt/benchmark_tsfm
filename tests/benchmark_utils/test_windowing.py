@@ -33,6 +33,14 @@ def test_short_series_dropped():
     assert len(d["X_train"]) == len(d["X_test"]) == 1
 
 
+def test_windows_with_short_history_skipped():
+    # T=25 with H=10: the first of 2 windows would start after 5 points.
+    d = build_forecasting_data(
+        [_series(25), _series(15)], prediction_length=10, n_windows=2
+    )
+    assert d["cutoff_indexes"] == [[15]]
+
+
 def test_all_series_too_short_raises():
     with pytest.raises(ValueError, match="shorter than prediction_length"):
         build_forecasting_data([_series(5)], prediction_length=10)
