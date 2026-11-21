@@ -98,3 +98,21 @@ def test_covariates_encode_categories_as_codes():
     assert [a.shape for a in dynamic] == [(2, 2), (3, 2), (1, 2)]
     np.testing.assert_array_equal(dynamic[1], [[1, 1], [1, 1], [0, 2]])
     assert fev._dynamic_covariates(df, None) is None
+
+
+@pytest.mark.parametrize(
+    "seasonality, freq, expected",
+    [
+        (1, "D", 7),
+        (1, "MS", 12),
+        (1, "QS-OCT", 4),
+        (1, "W-SUN", 1),
+        (96, "15min", 96),
+        (1, "2h", 12),
+        (1, "7h", 1),
+        # longer than the baseline context: no season
+        (1, "min", 1),
+    ],
+)
+def test_baseline_seasonality(seasonality, freq, expected):
+    assert fev._baseline_seasonality(seasonality, freq) == expected
