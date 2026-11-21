@@ -40,6 +40,11 @@ class Dataset(BaseDataset):
     _amplitude = 2.0
     _noise = 0.3
 
+    @property
+    def meta(self):
+        """Attributes read by the solvers' skip without loading the data."""
+        return {"n_classes": self.n_classes}
+
     def get_data(self):
         rng = np.random.default_rng(self.random_state)
 

@@ -20,6 +20,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
 
+from benchmark_utils.ucr_meta import UCR_N_CLASSES
+
 
 class Dataset(BaseDataset):
     """UCR Archive classification dataset.
@@ -42,6 +44,12 @@ class Dataset(BaseDataset):
         "dataset_name": ["ECG5000"],
         "debug": [False],
     }
+
+    @property
+    def meta(self):
+        """Attributes read by the solvers' skip without loading the data."""
+        n_classes = UCR_N_CLASSES.get(self.dataset_name)
+        return {} if n_classes is None else {"n_classes": n_classes}
 
     def get_data(self):
         loader = UCR_UEA_datasets()

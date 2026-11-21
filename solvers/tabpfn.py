@@ -42,8 +42,8 @@ class Solver(TabularFMSolver):
         return np.stack(q, axis=1)
 
     def skip(self):
-        data = self.objective_.get_objective()
-        if data["task"] == "classification" and len(np.unique(data["y_train"])) > 10:
+        n_classes = getattr(self.dataset_, "meta", {}).get("n_classes", 0)
+        if self.dataset_.task == "classification" and n_classes > 10:
             return f"{self.name} supports at most 10 classes"
         return super().skip()
 
