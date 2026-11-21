@@ -105,6 +105,29 @@ FEV_DATASETS: tuple[str, ...] = (
 )
 
 
+
+# Seasonality per pandas base alias, as autogluon's get_seasonality, which
+# fev-bench's statsforecast baselines combine with the task seasonality.
+_AG_SEASONALITY = {
+    "Y": 1, "Q": 4, "M": 12, "SM": 24, "W": 1, "D": 7, "B": 5,
+    "h": 24, "min": 1440, "s": 1, "ms": 1, "us": 1, "ns": 1,
+}  # fmt: skip
+# Context kept by fev-bench's statsforecast baselines.
+BASELINE_CONTEXT_LENGTH = 1000
+
+
+def _baseline_seasonality(seasonality: int, freq: str) -> int:
+    """Season of fev-bench's Seasonal Naive: the larger of the task's and
+    the frequency's, or 1 when it exceeds the context the baseline sees."""
+    offset = pd.tseries.frequencies.to_offset(freq)
+    # Drop the anchor and the start/end suffix: QS-OCT, ME, YE-DEC, ...
+    alias = offset.name.split("-")[0].rstrip("ESe")
+    alias = {"H": "h", "T": "min", "A": "Y", "S": "s", "BM": "M"}.get(alias, alias)
+    base, rest = divmod(_AG_SEASONALITY.get(alias, 1), offset.n)
+    season = max(seasonality, 1 if rest else base)
+    return season if season <= BASELINE_CONTEXT_LENGTH else 1
+
+
 def _infer_freq(timestamps) -> str:
     """Best-effort freq inference from a series' timestamp column.
 
@@ -335,8 +358,13 @@ class Dataset(BaseDataset):
                 covariates=covariates,
             ),
             task=self.task,
-            metrics=list(FORECASTING_METRICS),
+            # fev-bench's aggregation, next to the pooled one of GIFT-Eval.
+            metrics=[*FORECASTING_METRICS, "mase_fev", "wql_fev"],
             prediction_length=pred_len,
             freq=canonical_freq,
             seasonality=task["seasonality"],
+            baseline_seasonality=_baseline_seasonality(
+                task["seasonality"], inferred_freq
+            ),
+            baseline_context_length=BASELINE_CONTEXT_LENGTH,
         )

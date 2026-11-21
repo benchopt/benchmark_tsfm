@@ -83,3 +83,13 @@ def test_two_cutoffs_scored_separately():
     np.testing.assert_allclose(fan[0, 0, 0, Q_HI], 1.0 + Z10)
     np.testing.assert_allclose(fan[1, 0, 0, Q_HI], 3.0 + Z10)
     np.testing.assert_allclose(fan[1, 1, 0, Q_HI], 3.0 + Z10 * np.sqrt(2))
+
+
+def test_context_length_keeps_last_steps():
+    # Only the last 4 steps enter the spread: their seasonal diffs are 0.
+    hist = np.array([[0.0], [9.0], [1.0], [1.0], [1.0], [1.0]])
+    adapter = _SeasonalNaiveForecaster(
+        prediction_length=1, season_length=1, context_length=4
+    )
+    out = adapter.predict(ForecastInput(x=[hist], cutoff_indexes=[[6]]))
+    np.testing.assert_allclose(out.quantiles[0][0, 0, 0], 1.0)
