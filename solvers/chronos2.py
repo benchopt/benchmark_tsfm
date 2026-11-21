@@ -8,10 +8,9 @@ Additionally provides:
     anomaly detection via the default adaptation strategies.
 
 Model loading is done in ``set_objective`` (untimed). Inference batches
-every (series, cutoff) pair into a single
-``Chronos2Pipeline.predict_quantiles`` call: the pipeline accepts a list
-of variable-length tensors and applies left-padding internally, so all
-the per-cutoff work happens in one forward pass.
+(series, cutoff) pairs into ``Chronos2Pipeline.predict_quantiles`` calls:
+the pipeline accepts a list of variable-length tensors and applies
+left-padding internally.
 
 References
 ----------
@@ -37,6 +36,9 @@ class Solver(BaseTSFMSolver):
         Chronos-2 model variant: "tiny", "mini", "small", "base", "large".
     pooler : {"mean", "max", "last"}
         Pooling strategy over the time-token axis for embed_batch.
+    cross_learning : bool
+        Share information across the series of a batch, as fev-bench's
+        Chronos-2 entry. Each batch then holds one window per series.
     """
 
     name = "Chronos2"
@@ -45,6 +47,7 @@ class Solver(BaseTSFMSolver):
 
     parameters = {
         "model_size": ["small"],
+        "cross_learning": [True],
         "pooler": ["mean"],
         "classifier": ["log_reg"],
         "penalty": ["l2"],
@@ -84,6 +87,7 @@ class Solver(BaseTSFMSolver):
                 chrono_inputs,
                 prediction_length=prediction_length,
                 quantile_levels=list(self.quantile_levels),
+                cross_learning=self.cross_learning,
             )
         return [rearrange(pred, "c h q -> h c q") for pred in output]
 

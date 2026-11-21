@@ -88,8 +88,7 @@ def _seasonal_naive_scales_per_window(
             diff = np.abs(ctx[s:] - ctx[:-s])
             if nan_mask is not None:
                 nm = nan_mask[:cutoff]
-                valid = ~(nm[s:] | nm[:-s])
-                diff = np.where(valid[:, None], diff, np.nan)
+                diff = np.where(nm[s:] | nm[:-s], np.nan, diff)
                 # a channel with no valid diff gets a NaN scale, which
                 # drops its scaled errors downstream
                 with warnings.catch_warnings():
@@ -211,19 +210,16 @@ def windows_valid_mask(
     target_shape: tuple[int, ...],
 ) -> np.ndarray:
     """Validity mask of the (M, H, C) target array: False on the points
-    that were imputed in the original targets. Takes the per-series NaN
-    masks and the jagged cutoffs, in the flattened series-major /
-    cutoff-minor window order; the per-step validity broadcasts over
-    channels."""
-    valid = np.ones(target_shape[:2], dtype=bool)
+    that were imputed in the original targets. Takes the per-series
+    (T, C) NaN masks and the jagged cutoffs, in the flattened
+    series-major / cutoff-minor window order."""
+    valid = np.ones(target_shape, dtype=bool)
     i = 0
     for nan_mask, cutoffs in zip(nan_masks, cutoff_indexes):
         for cutoff in cutoffs:
             valid[i] = ~nan_mask[cutoff : cutoff + target_shape[1]]
             i += 1
-    mask = np.empty(target_shape, dtype=bool)
-    mask[:] = valid[:, :, None]
-    return mask
+    return valid
 
 
 def smape(
@@ -317,6 +313,71 @@ def wql(
     per_level = _pinball_per_level(y_true, forecast, valid_mask)
     per_level_sum = per_level * n_elem
     return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
+
+
+
+def _fev_windows(
+    histories: Sequence[np.ndarray], cutoff_indexes: Sequence[Sequence[int]]
+) -> list[np.ndarray]:
+    """Indexes of the flattened windows of each fev-bench evaluation window,
+    i.e. the windows at the same distance from their series end."""
+    dist = np.array(
+        [len(h) - c for h, cutoffs in zip(histories, cutoff_indexes) for c in cutoffs]
+    )
+    return [np.flatnonzero(dist == d) for d in np.unique(dist)]
+
+
+def mase_fev(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    seasonality: int = 1,
+    histories: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    nan_masks: Sequence[np.ndarray] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """MASE aggregated as fev-bench: mean over the series and horizon of
+    each window and target channel, then over channels and windows."""
+    scales = _seasonal_naive_scales_per_window(
+        histories, cutoff_indexes, seasonality, nan_masks
+    )
+    err = np.abs(y_true - _point_from_forecast(forecast)) / scales[:, None, :]
+    if valid_mask is not None:
+        err = np.where(valid_mask, err, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.nanmean(np.nanmean(err[w], axis=(0, 1)))
+            for w in _fev_windows(histories, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
+
+
+def wql_fev(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    histories: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """WQL aggregated as fev-bench: per window and target channel, the mean
+    quantile loss over the mean ``|y|`` (floored at 1, the ``epsilon`` of
+    every fev-bench task), then averaged over channels and windows."""
+    q, levels = _stacked(forecast)
+    y = y_true if valid_mask is None else np.where(valid_mask, y_true, np.nan)
+    ql = 2 * np.abs((y[..., None] - q) * ((y[..., None] <= q) - levels))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.mean(
+                np.nanmean(ql[w], axis=(0, 1, 3))
+                / np.maximum(np.nanmean(np.abs(y[w]), axis=(0, 1)), 1.0)
+            )
+            for w in _fev_windows(histories, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
 
 
 def mcis(
@@ -701,6 +762,8 @@ FORECASTING_METRICS = {
     "mcis": mcis,
     "pinball": pinball,
     "skill_score_ratio": skill_score_ratio,
+    "mase_fev": mase_fev,
+    "wql_fev": wql_fev,
 }
 
 CLASSIFICATION_METRICS = {

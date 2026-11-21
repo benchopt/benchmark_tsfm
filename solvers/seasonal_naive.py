@@ -39,11 +39,17 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
     """Repeat the last ``season_length`` observations to fill the horizon
     with a normal-quantile fan around each point."""
 
-    def __init__(self, prediction_length: int, season_length: int):
+    def __init__(
+        self,
+        prediction_length: int,
+        season_length: int,
+        context_length: int | None = None,
+    ):
         if season_length < 1:
             raise ValueError(f"season_length must be >= 1, got {season_length}")
         self.prediction_length = prediction_length
         self.season_length = season_length
+        self.context_length = context_length
         levels = np.asarray(QUANTILE_LEVELS)
         # statsforecast native CI half-width: the interval of width
         # round(200 * (max(q, 1-q) - 0.5)) percent around the mean is the
@@ -62,6 +68,8 @@ class _SeasonalNaiveForecaster(BaseTSFMAdapter):
             )
             for k, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]
+                if self.context_length is not None:
+                    hist = hist[-self.context_length :]
                 n = hist.shape[0]
                 season = min(self.season_length, n)
                 pattern = hist[-season:]
@@ -93,8 +101,10 @@ class Solver(BaseSolver):
     ----------
     season_length : int or "auto"
         Number of past steps to repeat. ``1`` recovers last-value
-        persistence. ``"auto"`` (the default) uses the dataset's own
-        seasonality, ``meta["seasonality"]``.
+        persistence. ``"auto"`` (the default) follows the dataset's
+        reference baseline, ``meta["baseline_seasonality"]`` and
+        ``meta["baseline_context_length"]``, and falls back to the
+        dataset's seasonality with the full history.
     """
 
     name = "SeasonalNaive"
@@ -119,11 +129,16 @@ class Solver(BaseSolver):
 
     def run(self, _):
         season_length = self.season_length
+        context_length = None
         if season_length == "auto":
-            season_length = self.meta.get("seasonality", 1)
+            season_length = self.meta.get(
+                "baseline_seasonality", self.meta.get("seasonality", 1)
+            )
+            context_length = self.meta.get("baseline_context_length")
         self._adapter = _SeasonalNaiveForecaster(
             prediction_length=self.meta.get("prediction_length", 1),
             season_length=season_length,
+            context_length=context_length,
         )
 
     def get_result(self):

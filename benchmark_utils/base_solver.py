@@ -593,22 +593,35 @@ class BaseTSFMSolver(BaseSolver):
             return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
 
         # Run in batches so very large datasets do not go through the model
-        # as a single oversized batch. Maintains ordering.
+        # as a single oversized batch.
         # Not a default attribute: benchopt rejects one that differs from a
         # declared parameter value.
         batch_size = getattr(self, "inference_batch_size", 128)
-        raw: list[torch.Tensor] = []
-        for start in range(0, len(inputs), batch_size):
-            end = start + batch_size
-            raw.extend(
-                self.forecast_batch(
-                    inputs[start:end], covariates[start:end], prediction_length
+        order = np.arange(len(inputs))
+        if getattr(self, "cross_learning", False):
+            # A model sharing information across a batch must not see two
+            # windows of one series together, as the later history holds the
+            # earlier target. Batch the windows at the same distance from the
+            # series end, like fev-bench's evaluation windows.
+            dist = [x.x[s].shape[0] - x.cutoff_indexes[s][c] for s, c in layout]
+            order = np.argsort(dist, kind="stable")
+            groups = np.split(order, np.flatnonzero(np.diff(np.sort(dist))) + 1)
+        else:
+            groups = [order]
+        raw = {}
+        for group in groups:
+            for start in range(0, len(group), batch_size):
+                idx = group[start : start + batch_size]
+                preds = self.forecast_batch(
+                    [inputs[i] for i in idx],
+                    [covariates[i] for i in idx],
+                    prediction_length,
                 )
-            )
+                raw.update(zip(idx, preds))
 
         per_series_preds = [[None] * n_cutoffs for _, n_cutoffs in per_series_shape]
-        for (series_idx, cutoff_idx), pred in zip(layout, raw):
-            per_series_preds[series_idx][cutoff_idx] = pred.float().cpu().numpy()
+        for i, (series_idx, cutoff_idx) in enumerate(layout):
+            per_series_preds[series_idx][cutoff_idx] = raw[i].float().cpu().numpy()
 
         per_series = [np.stack(preds) for preds in per_series_preds]
 

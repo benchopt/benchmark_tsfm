@@ -222,36 +222,6 @@ def _to_time_major(values: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unsupported covariate shape: {values.shape}")
 
 
-def _impute_nan(series: np.ndarray) -> np.ndarray:
-    """Impute NaN targets the way the official GIFT-Eval notebooks do
-    (gluonts LastValueImputation): forward-fill each channel, flat-fill
-    leading NaNs with the first valid value, 0.0 for all-NaN channels.
-
-    9 GIFT-Eval datasets ship NaN targets; left as is, they propagate
-    through solver histories (``hist[-s:]``) and metric reductions,
-    silently NaN-ing the scores. The original NaN locations are
-    returned alongside the data as ``nan_mask`` for the metrics to
-    exclude the imputed points.
-    """
-    # Arrow columns can decode to zero-copy read-only views: copy
-    # before writing in place.
-    if not series.flags.writeable and np.isnan(series).any():
-        series = series.copy()
-    for c in range(series.shape[1]):
-        col = series[:, c]
-        nan = np.isnan(col)
-        if not nan.any() or nan.all():
-            if nan.all():
-                col[:] = 0.0
-            continue
-        idx = np.where(nan, 0, np.arange(len(col)))
-        np.maximum.accumulate(idx, out=idx)
-        col[nan] = col[idx[nan]]
-        first = int(np.argmax(~nan))
-        col[:first] = col[first]
-    return series
-
-
 class Dataset(BaseDataset):
     """GIFT-Eval forecasting dataset (loaded from HF Salesforce/GiftEval).
 
@@ -411,23 +381,6 @@ class Dataset(BaseDataset):
                 "had unsupported target shapes."
             )
 
-        # Original NaN locations, for the metrics to exclude the
-        # imputed points. build_forecasting_data drops series shorter
-        # than pred_len + 1: filter them out here to keep the lists
-        # aligned.
-        nan_mask = [
-            np.isnan(ts).any(axis=1)
-            for ts in series_list
-            if ts.shape[0] >= pred_len + 1
-        ]
-        series_list = [_impute_nan(ts) for ts in series_list]
-        # Same filter as nan_mask, so covariate rows stay aligned with the
-        # series.
-        hist_covars = [
-            hist
-            for hist, ts in zip(past_covars_list, series_list)
-            if ts.shape[0] >= pred_len + 1
-        ]
         n_windows = self._resolve_n_windows(series_list, pred_len)
 
         return dict(
@@ -436,16 +389,11 @@ class Dataset(BaseDataset):
                 prediction_length=pred_len,
                 n_windows=n_windows,
                 debug=self.debug,
-            ),
-            covariates=(
-                Covariates(hist_covars=hist_covars)
-                if hist_covars
-                else Covariates()
+                covariates=Covariates(hist_covars=past_covars_list or None),
             ),
             task=self.task,
             metrics=list(FORECASTING_METRICS),
             prediction_length=pred_len,
             freq=pandas_freq,
             seasonality=seasonality,
-            nan_mask=nan_mask,
         )

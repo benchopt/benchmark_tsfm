@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from benchmark_utils.windowing import build_forecasting_data
+from benchmark_utils.covariates import Covariates
+from benchmark_utils.windowing import build_forecasting_data, impute_nan
 
 
 def _series(T):
@@ -53,3 +54,72 @@ def test_debug_uses_single_window():
     # Train cut still reserves n_windows, but only one window is evaluated.
     assert d["X_train"][0].shape == (80, 1)
     assert d["cutoff_indexes"][0] == [90]
+
+
+def test_covariates_follow_kept_series():
+    hist = [np.full((T, 1), T, dtype=np.float32) for T in (5, 40, 50)]
+    d = build_forecasting_data(
+        [_series(5), _series(40), _series(50)],
+        prediction_length=10,
+        covariates=Covariates(hist_covars=hist),
+    )
+    assert [h[0, 0] for h in d["covariates"].hist_covars] == [40, 50]
+    assert d["covariates"].future_covars is None
+
+
+@pytest.mark.parametrize(
+    "series, expected",
+    [
+        # forward-fill, leading flat-fill, all-NaN channel → 0.0
+        (
+            np.array([[np.nan], [1.0], [np.nan], [3.0]]),
+            np.array([[1.0], [1.0], [1.0], [3.0]]),
+        ),
+        (
+            np.array([[np.nan], [np.nan], [2.0], [np.nan]]),
+            np.array([[2.0], [2.0], [2.0], [2.0]]),
+        ),
+        (
+            np.array([[np.nan], [np.nan]]),
+            np.array([[0.0], [0.0]]),
+        ),
+        # multivariate: channels are filled independently
+        (
+            np.array([[1.0, np.nan], [np.nan, 5.0], [3.0, np.nan]]),
+            np.array([[1.0, 5.0], [1.0, 5.0], [3.0, 5.0]]),
+        ),
+    ],
+)
+def test_impute_nan(series, expected):
+    out = impute_nan(series.astype(np.float64))
+    np.testing.assert_allclose(out, expected)
+
+
+def test_impute_nan_read_only_view():
+    # zero-copy arrow views are read-only: impute_nan must copy
+    series = np.array([[np.nan], [1.0], [np.nan]])
+    view = series[:]
+    view.flags.writeable = False
+    out = impute_nan(view)
+    assert out is not view
+    np.testing.assert_allclose(out, [[1.0], [1.0], [1.0]])
+
+
+def test_nan_mask_follows_kept_series():
+    # The second series is 3 points too short to keep: its mask and
+    # covariates must be dropped with it.
+    nan_series = _series(30)
+    nan_series[25] = np.nan
+    series = [_series(30), _series(13), nan_series]
+    hist = [np.full((len(ts), 1), i, np.float32) for i, ts in enumerate(series)]
+    d = build_forecasting_data(
+        series, prediction_length=10, covariates=Covariates(hist_covars=hist)
+    )
+    assert [m.any() for m in d["nan_mask"]] == [False, True]
+    assert d["nan_mask"][1].shape == (30, 1) and d["nan_mask"][1][25, 0]
+    assert not np.isnan(d["X_test"][1]).any()
+    assert [h[0, 0] for h in d["covariates"].hist_covars] == [0, 2]
+
+
+def test_no_nan_mask_without_nan():
+    assert "nan_mask" not in build_forecasting_data([_series(30)], prediction_length=10)
