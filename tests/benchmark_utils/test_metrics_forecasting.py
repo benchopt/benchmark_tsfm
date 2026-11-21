@@ -7,8 +7,10 @@ from benchmark_utils.metrics import (
     _seasonal_naive_scales_per_window,
     mae,
     mase,
+    mase_fev,
     smape,
     windows_valid_mask,
+    wql_fev,
 )
 from benchmark_utils.outputs import ForecastOutput
 
@@ -125,3 +127,23 @@ def test_smape_valid_mask():
     valid = np.array([[[True], [False]]])
     # both points are 0/0 or masked: undefined -> NaN
     assert np.isnan(smape(y_true, forecast, valid_mask=valid))
+
+
+def test_fev_metrics_average_per_window_and_channel():
+    # Two series ending together, one window each, two channels: the
+    # second channel has 10x the error and 10x the scale of the first.
+    histories = [np.array([[0.0, 0.0], [1.0, 10.0], [2.0, 20.0]])] * 2
+    cutoffs = [[2], [2]]
+    y_true = np.array([[[2.0, 20.0]], [[2.0, 20.0]]])
+    forecast = _point_forecast(np.array([[[1.0, 10.0]], [[3.0, 30.0]]]))
+    # |err| / scale is 1 everywhere
+    assert mase_fev(y_true, forecast, 1, histories, cutoffs) == pytest.approx(1.0)
+    # per channel 2 * 0.5 * mean|err| / mean|y|: 1 / 2 and 10 / 20
+    assert wql_fev(y_true, forecast, histories, cutoffs) == pytest.approx(0.5)
+
+
+def test_wql_fev_floors_the_scale_at_one():
+    histories = [np.zeros((3, 1))]
+    y_true = np.zeros((1, 1, 1))
+    forecast = _point_forecast(np.full((1, 1, 1), 0.5))
+    assert wql_fev(y_true, forecast, histories, [[2]]) == pytest.approx(0.5)
