@@ -62,10 +62,16 @@ class Dataset(BaseDataset):
     def meta(self):
         """Attributes read by the solvers' skip without loading the data."""
         with open(_fetch_table()) as f:
-            table = {d["Dataset"]: int(d["Number_of_classes"]) for d in json.load(f)}
+            table = {d["Dataset"]: d for d in json.load(f)}
         # tslearn spells the NonInvasiveFetalECG datasets "Fatal".
-        n_classes = table.get(self.dataset_name.replace("Fatal", "Fetal"))
-        return {} if n_classes is None else {"n_classes": n_classes}
+        entry = table.get(self.dataset_name.replace("Fatal", "Fetal"))
+        meta = {}
+        if entry is not None:
+            meta = {
+                "n_classes": int(entry["Number_of_classes"]),
+                "multivariate": entry["Multivariate_flag"] == "1",
+            }
+        return meta
 
     def prepare(self):
         UCR_UEA_datasets().load_dataset(self.dataset_name)
