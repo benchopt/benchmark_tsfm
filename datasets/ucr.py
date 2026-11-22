@@ -15,12 +15,16 @@ n_classes : int
 """
 
 import numpy as np
-from benchopt import BaseDataset
+import pandas as pd
+import pooch
+from benchopt import BaseDataset, config
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
 
-from benchmark_utils.ucr_meta import UCR_N_CLASSES
+# Summary of the univariate archive, with the class count of each dataset.
+SUMMARY_URL = "https://www.cs.ucr.edu/~eamonn/time_series_data_2018/DataSummary.csv"
+SUMMARY_SHA256 = "7fe2428588c5d513b88df2c480d71e25e4f113e8ad695e21ee2057dfac53c3ac"
 
 
 class Dataset(BaseDataset):
@@ -38,7 +42,7 @@ class Dataset(BaseDataset):
     # Read by the solvers' skip without loading the data.
     task = "classification"
 
-    requirements = ["pip::tslearn"]
+    requirements = ["pip::tslearn", "pip::pooch"]
 
     parameters = {
         "dataset_name": ["ECG5000"],
@@ -48,8 +52,14 @@ class Dataset(BaseDataset):
     @property
     def meta(self):
         """Attributes read by the solvers' skip without loading the data."""
-        n_classes = UCR_N_CLASSES.get(self.dataset_name)
-        return {} if n_classes is None else {"n_classes": n_classes}
+        path = pooch.retrieve(
+            SUMMARY_URL, known_hash=SUMMARY_SHA256, path=config.get_data_path(key="UCR")
+        )
+        summary = pd.read_csv(path, encoding="utf-8-sig")
+        # tslearn spells the NonInvasiveFetalECG datasets "Fatal".
+        names = summary["Name"].str.replace("Fetal", "Fatal")
+        n_classes = summary["Class"][names == self.dataset_name]
+        return {"n_classes": int(n_classes.iloc[0])} if len(n_classes) else {}
 
     def get_data(self):
         loader = UCR_UEA_datasets()
