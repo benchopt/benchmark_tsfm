@@ -6,6 +6,10 @@ import pytest
 from benchopt.benchmark import Benchmark
 from benchopt.utils.run_context import RunContext
 
+# Without them benchopt loads placeholder classes.
+for module in ["tabpfn", "tabicl.forecast", "tslearn"]:
+    pytest.importorskip(module)
+
 BENCHMARK_DIR = Path(__file__).parents[2]
 benchmark = Benchmark(BENCHMARK_DIR)
 (Solver,) = benchmark.check_solver_patterns(["TabPFN-v2"], class_only=True)
