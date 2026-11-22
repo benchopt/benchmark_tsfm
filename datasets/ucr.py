@@ -14,17 +14,24 @@ metrics : ["accuracy", "balanced_accuracy", "f1_weighted"]
 n_classes : int
 """
 
+import json
+
 import numpy as np
-import pandas as pd
 import pooch
 from benchopt import BaseDataset, config
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
 
-# Summary of the univariate archive, with the class count of each dataset.
-SUMMARY_URL = "https://www.cs.ucr.edu/~eamonn/time_series_data_2018/DataSummary.csv"
-SUMMARY_SHA256 = "7fe2428588c5d513b88df2c480d71e25e4f113e8ad695e21ee2057dfac53c3ac"
+# Dataset table of timeseriesclassification.com, covering UCR and UEA.
+TABLE_URL = "https://timeseriesclassification.com/JSON/datasetTable.json"
+
+
+def _fetch_table():
+    # The live table grows with the archive, so its hash is not pinned.
+    return pooch.retrieve(
+        TABLE_URL, known_hash=None, path=config.get_data_path(key="UCR")
+    )
 
 
 class Dataset(BaseDataset):
@@ -49,17 +56,20 @@ class Dataset(BaseDataset):
         "debug": [False],
     }
 
+    prepare_cache_ignore = ("debug",)
+
     @property
     def meta(self):
         """Attributes read by the solvers' skip without loading the data."""
-        path = pooch.retrieve(
-            SUMMARY_URL, known_hash=SUMMARY_SHA256, path=config.get_data_path(key="UCR")
-        )
-        summary = pd.read_csv(path, encoding="utf-8-sig")
+        with open(_fetch_table()) as f:
+            table = {d["Dataset"]: int(d["Number_of_classes"]) for d in json.load(f)}
         # tslearn spells the NonInvasiveFetalECG datasets "Fatal".
-        names = summary["Name"].str.replace("Fetal", "Fatal")
-        n_classes = summary["Class"][names == self.dataset_name]
-        return {"n_classes": int(n_classes.iloc[0])} if len(n_classes) else {}
+        n_classes = table.get(self.dataset_name.replace("Fatal", "Fetal"))
+        return {} if n_classes is None else {"n_classes": n_classes}
+
+    def prepare(self):
+        UCR_UEA_datasets().load_dataset(self.dataset_name)
+        _fetch_table()
 
     def get_data(self):
         loader = UCR_UEA_datasets()
