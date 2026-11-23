@@ -42,13 +42,10 @@ class Solver(TabularFMSolver):
         return np.stack(q, axis=1)
 
     def skip(self):
-        reason = super().skip()
-        # Only classification needs the data, to count the classes.
-        if reason is None and self.dataset_.task == "classification":
-            y_train = self.objective_.get_objective()["y_train"]
-            if len(np.unique(y_train)) > 10:
-                reason = f"{self.name} supports at most 10 classes"
-        return reason
+        n_classes = getattr(self.dataset_, "meta", {}).get("n_classes", 0)
+        if self.dataset_.task == "classification" and n_classes > 10:
+            return f"{self.name} supports at most 10 classes"
+        return super().skip()
 
     def make_classifier(self, device):
         # "auto" spreads the ensemble over all visible GPUs.

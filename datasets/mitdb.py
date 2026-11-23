@@ -205,6 +205,11 @@ class Dataset(BaseDataset):
         "record_ids": [["100"]],
     }
 
+    @property
+    def meta(self):
+        """Attributes read by the solvers' skip without loading the data."""
+        return {"n_classes": self.n_classes}
+
     def get_data(self):
         data_dir = fetch_mitdb()
 
