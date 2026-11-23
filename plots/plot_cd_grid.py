@@ -516,10 +516,7 @@ class Plot(BasePlot):
         return plots, options
 
     def plot(self, df, objective_column):
-        # benchopt pre-shortens ``solver_name`` before ``plot`` is called
-        # (keeping only the parameters that vary), so several parametrizations
-        # of one solver arrive as distinct labels — the CD diagram groups on
-        # that column and gets unique short labels for free.
+        # benchopt shortens ``solver_name``, keeping the parameters that vary.
         fig, ax = plt.subplots(figsize=(10, 5))
         cd_for_metric(df, objective_column, ax)
         return [{"image": _fig_to_array(fig), "label": objective_column}]
