@@ -31,6 +31,25 @@ Capability           Input, one per series  Output, one per series
 prediction length ``H``. ``T'`` is set by the model, e.g. by its patch size.
 
 
+Skipping a dataset
+------------------
+
+``skip()`` runs before the data is loaded. A solver reads what it needs from
+``self.dataset_``: its ``task`` attribute, and its ``meta`` dict when the
+dataset defines one. ``meta`` holds attributes that a dataset knows from its
+parameters alone, such as ``n_classes`` and ``multivariate`` for UCR. A dataset
+leaves out the keys it does not know, so read them with ``.get``. For example,
+TabPFN-v2 skips datasets with more than 10 classes:
+
+.. code-block:: python
+
+    def skip(self):
+        n_classes = getattr(self.dataset_, "meta", {}).get("n_classes", 0)
+        if self.dataset_.task == "classification" and n_classes > 10:
+            return f"{self.name} supports at most 10 classes"
+        return super().skip()
+
+
 Adapter API
 -----------
 
