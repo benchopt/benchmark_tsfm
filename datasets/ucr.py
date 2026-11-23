@@ -14,11 +14,24 @@ metrics : ["accuracy", "balanced_accuracy", "f1_weighted"]
 n_classes : int
 """
 
+import json
+
 import numpy as np
-from benchopt import BaseDataset
+import pooch
+from benchopt import BaseDataset, config
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from tslearn.datasets import UCR_UEA_datasets
+
+# Dataset table of timeseriesclassification.com, covering UCR and UEA.
+TABLE_URL = "https://timeseriesclassification.com/JSON/datasetTable.json"
+
+
+def _fetch_table():
+    # The live table grows with the archive, so its hash is not pinned.
+    return pooch.retrieve(
+        TABLE_URL, known_hash=None, path=config.get_data_path(key="UCR")
+    )
 
 
 class Dataset(BaseDataset):
@@ -36,12 +49,33 @@ class Dataset(BaseDataset):
     # Read by the solvers' skip without loading the data.
     task = "classification"
 
-    requirements = ["pip::tslearn"]
+    requirements = ["pip::tslearn", "pip::pooch"]
 
     parameters = {
         "dataset_name": ["ECG5000"],
         "debug": [False],
     }
+
+    prepare_cache_ignore = ("debug",)
+
+    @property
+    def meta(self):
+        """Attributes read by the solvers' skip without loading the data."""
+        with open(_fetch_table()) as f:
+            table = {d["Dataset"]: d for d in json.load(f)}
+        # tslearn spells the NonInvasiveFetalECG datasets "Fatal".
+        entry = table.get(self.dataset_name.replace("Fatal", "Fetal"))
+        meta = {}
+        if entry is not None:
+            meta = {
+                "n_classes": int(entry["Number_of_classes"]),
+                "multivariate": entry["Multivariate_flag"] == "1",
+            }
+        return meta
+
+    def prepare(self):
+        UCR_UEA_datasets().load_dataset(self.dataset_name)
+        _fetch_table()
 
     def get_data(self):
         loader = UCR_UEA_datasets()
