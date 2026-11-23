@@ -279,6 +279,10 @@ class BaseTSFMSolver(BaseSolver):
     dtype
         The data type of both data and model.
         Default to bfloat16 on CUDA, float32 elsewhere.
+
+    inference_batch_size
+        Max number of (series, cutoff) windows sent to the model per
+        forward call, 128 unless the subclass declares it as a parameter.
     """
 
     supported_tasks: set[TaskType]
@@ -292,10 +296,15 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
+    # Single fit/predict pass: pin it so the cache key never depends on the
+    # Objective's lazily inherited value.
+    sampling_strategy = "run_once"
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
         self._loaded_model_id: str | None = None
         self.model: Any = None
+
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -433,11 +442,13 @@ class BaseTSFMSolver(BaseSolver):
             case _:
                 raise NotImplementedError(f"Unknown task: {task!r}")
 
-    def skip(self, task: TaskType, **_: Any) -> tuple[bool, str | None]:
+    def skip(self) -> str | None:
         """Skip unsupported tasks."""
+        task = self.dataset_.task
+        reason = None
         if task not in self.supported_tasks:
-            return True, f"{self.name} solver does not support task={task!r}"
-        return False, None
+            reason = f"{self.name} solver does not support task={task!r}"
+        return reason
 
     def set_objective(
         self,
@@ -573,16 +584,27 @@ class BaseTSFMSolver(BaseSolver):
             for cutoff_idx, cutoff in enumerate(cutoffs):
                 hist = series[:cutoff]  # (T_cutoff, C)
                 inputs.append(torch.from_numpy(hist))
-                covariates.append(x.covariates.slice(cutoff, prediction_length))
+                covariates.append(
+                    x.covariates.slice(series_idx, cutoff, prediction_length)
+                )
                 layout.append((series_idx, cutoff_idx))
 
         if not inputs:
             return ForecastOutput(quantiles=[], quantile_levels=quantile_levels)
 
-        # TODO We still do this in batches in case data is very large
-
-        # Get a list of model outputs aligned with inputs
-        raw = self.forecast_batch(inputs, covariates, prediction_length)
+        # Run in batches so very large datasets do not go through the model
+        # as a single oversized batch. Maintains ordering.
+        # Not a default attribute: benchopt rejects one that differs from a
+        # declared parameter value.
+        batch_size = getattr(self, "inference_batch_size", 128)
+        raw: list[torch.Tensor] = []
+        for start in range(0, len(inputs), batch_size):
+            end = start + batch_size
+            raw.extend(
+                self.forecast_batch(
+                    inputs[start:end], covariates[start:end], prediction_length
+                )
+            )
 
         per_series_preds = [[None] * n_cutoffs for _, n_cutoffs in per_series_shape]
         for (series_idx, cutoff_idx), pred in zip(layout, raw):

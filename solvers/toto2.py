@@ -33,7 +33,7 @@ class Solver(BaseTSFMSolver):
 
     parameters = {
         "checkpoint": ["Datadog/Toto-2.0-2.5B"],
-        "context_length": [512],
+        "context_length": [4096],
         "decode_block_size": [None],
         "patch_size": [32],
         "layer": [None],

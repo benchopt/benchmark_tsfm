@@ -188,6 +188,8 @@ class Dataset(BaseDataset):
     """
 
     name = "MITDB"
+    # Read by the solvers' skip without loading the data.
+    task = "event_detection"
 
     requirements = ["wfdb"]
 
@@ -202,6 +204,11 @@ class Dataset(BaseDataset):
     test_parameters = {
         "record_ids": [["100"]],
     }
+
+    @property
+    def meta(self):
+        """Attributes read by the solvers' skip without loading the data."""
+        return {"n_classes": self.n_classes}
 
     def get_data(self):
         data_dir = fetch_mitdb()
@@ -248,7 +255,7 @@ class Dataset(BaseDataset):
             y_train=y_train,
             X_test=X_test,
             y_test=y_test,
-            task="event_detection",
+            task=self.task,
             metrics=["map_iou"],
             n_classes=self.n_classes,
         )

@@ -6,7 +6,38 @@ from benchmark_utils.forecasting_constants import (
     from_aeon,
     from_pandas,
     gift_eval_prediction_length,
+    gift_eval_seasonality,
+    safe_freq,
 )
+
+
+@pytest.mark.parametrize(
+    "alias, expected",
+    [
+        # gluonts DEFAULT_SEASONALITIES: differs from _BASE on D, W and S
+        ("H", 24),
+        ("D", 1),
+        ("W", 1),
+        ("W-SUN", 1),
+        ("M", 12),
+        ("Q", 4),
+        ("Y", 1),
+        ("T", 1440),
+        ("S", 3600),
+        # multipliers divide the seasonality, non-exact division → 1
+        ("15T", 96),
+        ("5T", 288),
+        ("6H", 4),
+        ("7T", 1),
+        ("10S", 360),
+        ("45T", 32),
+        # unknown or empty → 1
+        ("", 1),
+        ("??", 1),
+    ],
+)
+def test_gift_eval_seasonality(alias, expected):
+    assert gift_eval_seasonality(alias) == expected
 
 
 @pytest.mark.parametrize(
@@ -68,3 +99,29 @@ def test_gift_eval_prediction_length_m4():
     assert gift_eval_prediction_length("W", "short", "m4_weekly/W") == 13
     assert gift_eval_prediction_length("D", "short", "m4_daily/D") == 14
     assert gift_eval_prediction_length("H", "short", "m4_hourly/H") == 48
+
+
+@pytest.mark.parametrize(
+    "alias, expected",
+    [
+        ("A-DEC", "YE-DEC"),
+        ("Y", "YE"),
+        ("Q", "QE"),
+        ("M", "ME"),
+        ("H", "h"),
+        ("6H", "6h"),
+        ("5T", "5min"),
+        ("4S", "4s"),
+        ("W-SUN", "W-SUN"),
+        ("D", "D"),
+        ("QS-OCT", "QS-OCT"),
+        (None, "h"),
+    ],
+)
+def test_safe_freq_normalizes_legacy_aliases(alias, expected):
+    assert safe_freq(alias) == expected
+
+
+def test_safe_freq_warns_on_unusable_alias():
+    with pytest.warns(UserWarning, match="freq"):
+        assert safe_freq("not-a-freq") == "h"

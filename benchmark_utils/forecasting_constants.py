@@ -1,4 +1,5 @@
-"""Shared forecasting constants: frequency / seasonality tables and metrics.
+"""Shared forecasting constants: frequency / seasonality tables, metrics
+and the canonical quantile levels.
 
 Two sources name frequencies differently:
   - aeon (used by Monash) uses words: "yearly", "weekly", "minutely", ...
@@ -10,6 +11,9 @@ adapters that normalize each source onto that canonical key.
 """
 
 import re
+import warnings
+
+from pandas.tseries.frequencies import to_offset
 
 # Metrics reported by every forecasting dataset (names from
 # benchmark_utils.metrics.ALL_METRICS).
@@ -17,6 +21,11 @@ FORECASTING_METRICS = (
     "mae", "mse", "rmse", "mase", "smape",
     "crps", "wql", "mcis", "pinball", "skill_score_ratio",
 )
+
+# Quantile levels the GIFT-Eval evaluator scores on; solvers whose native
+# fan is wider slice their output to this tuple, so band metrics stay
+# comparable across solvers and with the leaderboard.
+CANONICAL_QUANTILE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 # Canonical base alias → (display_freq, MASE seasonality, default forecast horizon)
 _BASE = {
@@ -87,6 +96,42 @@ def from_pandas(freq_alias: str) -> tuple[str, int, int]:
         return _BASE["D"]
     _, seasonality, default_h = _BASE[base]
     return freq_alias, max(1, seasonality // max(mult, 1)), default_h
+
+
+# gluonts ``DEFAULT_SEASONALITIES`` (time_feature/seasonality.py): the
+# table the GIFT-Eval leaderboard uses for MASE and SeasonalNaive.
+# Differs from ``_BASE`` on D (1 vs 7), W (1 vs 52) and S (3600 vs 1).
+_GLUONTS_SEASONALITIES = {
+    "S": 3600,
+    "T": 1440,
+    "H": 24,
+    "D": 1,
+    "W": 1,
+    "M": 12,
+    "Q": 4,
+    "Y": 1,
+}
+
+
+def gift_eval_seasonality(freq_alias: str) -> int:
+    """Seasonality used by the GIFT-Eval leaderboard (gluonts table).
+
+    Mirrors ``gluonts.time_feature.get_seasonality``: look up the base
+    alias (anchors and modern pandas spellings normalized), divide by
+    the multiplier, fall back to 1 when the division is not exact or
+    the alias is unknown.
+    """
+    if not freq_alias:
+        return 1
+    m = _PANDAS_ALIAS_RE.match(freq_alias.split("-", 1)[0])
+    if not m:
+        return 1
+    mult = int(m.group(1)) if m.group(1) else 1
+    base = _NORMALIZE_BASE.get(m.group(2), m.group(2)[:1].upper())
+    if base not in _GLUONTS_SEASONALITIES:
+        return 1
+    seasonality, remainder = divmod(_GLUONTS_SEASONALITIES[base], mult)
+    return seasonality if not remainder else 1
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +205,31 @@ def gift_eval_prediction_length(
     if base is None:
         base = 48
     return base * GIFT_EVAL_TERM_MULTIPLIER[term]
+
+
+# Pre-2.2 pandas aliases, rejected by pandas 3.
+_LEGACY_FREQ = {
+    "A": "YE", "Y": "YE", "AS": "YS", "Q": "QE", "M": "ME",
+    "H": "h", "T": "min", "S": "s", "L": "ms", "U": "us", "N": "ns",
+}  # fmt: skip
+_FREQ_RE = re.compile(r"^(\d*)([A-Za-z]+)(-\w+)?$")
+
+
+def safe_freq(freq):
+    """Return a pandas-usable frequency alias, defaulting to hourly.
+
+    Used to synthesize a regular index for models that need timestamps, as
+    ForecastInput carries none. Legacy aliases are mapped to
+    their current spelling, and an unusable alias falls back with a warning.
+    """
+    if not freq:
+        return "h"
+    if m := _FREQ_RE.match(freq):
+        mult, base, anchor = m.groups()
+        freq = f"{mult}{_LEGACY_FREQ.get(base, base)}{anchor or ''}"
+    try:
+        to_offset(freq)
+    except (ValueError, TypeError):
+        warnings.warn(f"Unusable freq {freq!r}, synthesizing hourly timestamps.")
+        freq = "h"
+    return freq

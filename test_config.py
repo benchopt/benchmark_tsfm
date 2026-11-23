@@ -6,8 +6,14 @@ for some reason (e.g. missing API key, or too long to run in CI).
 """
 
 import os
+import sys
 
-import pytest
+# On macOS, torch's and conda's OpenMP runtimes clash and make Chronos'
+# T5 encoder segfault; a single OpenMP thread avoids it.
+if sys.platform == "darwin":
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import pytest  # noqa: E402
 
 
 # These datasets load fine locally, but their download hosts block / rate-limit

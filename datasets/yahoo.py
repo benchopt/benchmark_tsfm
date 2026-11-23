@@ -6,6 +6,8 @@ from benchmark_utils.metrics import AD_METRICS
 
 class Dataset(BaseDataset):
     name = "YAHOO"
+    # Read by the solvers' skip without loading the data.
+    task = "anomaly_detection"
 
     requirements = ["pip::pooch", "pip::tqdm"]
 
@@ -40,6 +42,6 @@ class Dataset(BaseDataset):
             y_train=None,
             y_test=y_test,
             X_test=X_test,
-            task="anomaly_detection",
+            task=self.task,
             metrics=list(AD_METRICS.keys()),
         )
