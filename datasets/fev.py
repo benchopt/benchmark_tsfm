@@ -34,6 +34,7 @@ span the whole series, and categorical values are encoded as integer codes.
 """
 
 import functools
+import re
 import warnings
 
 import numpy as np
@@ -44,7 +45,11 @@ from benchopt import BaseDataset, config
 
 from benchmark_utils.covariates import Covariates
 from benchmark_utils.download_hf import snapshot_hf_files
-from benchmark_utils.forecasting_constants import FORECASTING_METRICS, from_pandas
+from benchmark_utils.forecasting_constants import (
+    FORECASTING_METRICS,
+    autogluon_seasonality,
+    from_pandas,
+)
 from benchmark_utils.windowing import MIN_CONTEXT, build_forecasting_data
 
 
@@ -58,60 +63,11 @@ _TASKS_URL = (
 _TASKS_SHA256 = "c7160f61a5e1ded66a3954ef1c514d55d13be18534b34fca817356312a6520a9"
 
 
-# Directory paths inside https://huggingface.co/datasets/autogluon/fev_datasets
-# that contain at least one ``train-*.parquet`` file.
-FEV_DATASETS: tuple[str, ...] = (
-    "ETT/15T", "ETT/1D", "ETT/1H", "ETT/1W",
-    "LOOP_SEATTLE/1D", "LOOP_SEATTLE/1H", "LOOP_SEATTLE/5T",
-    "M_DENSE/1D", "M_DENSE/1H",
-    "SZ_TAXI/15T", "SZ_TAXI/1H",
-    "australian_tourism",
-    "bizitobs_l2c/1H", "bizitobs_l2c/5T",
-    "boomlet/1062", "boomlet/1209", "boomlet/1225", "boomlet/1230",
-    "boomlet/1282", "boomlet/1487", "boomlet/1631", "boomlet/1676",
-    "boomlet/1855", "boomlet/1975", "boomlet/2187",
-    "boomlet/285", "boomlet/619", "boomlet/772", "boomlet/963",
-    "ecdc_ili",
-    "entsoe/15T", "entsoe/1H", "entsoe/30T",
-    "epf_be", "epf_de", "epf_fr", "epf_np", "epf_pjm",
-    "ercot/1D", "ercot/1H", "ercot/1M", "ercot/1W",
-    "favorita_stores/1D", "favorita_stores/1M", "favorita_stores/1W",
-    "favorita_transactions/1D", "favorita_transactions/1M",
-    "favorita_transactions/1W",
-    "fred_md_2025", "fred_qd_2025",
-    "gvar", "hermes",
-    "hierarchical_sales/1D", "hierarchical_sales/1W",
-    "hospital",
-    "hospital_admissions/1D", "hospital_admissions/1W",
-    "jena_weather/10T", "jena_weather/1D", "jena_weather/1H",
-    "kdd_cup_2022/10T", "kdd_cup_2022/1D", "kdd_cup_2022/30T",
-    "m5/1D", "m5/1M", "m5/1W",
-    "proenfo_bull", "proenfo_cockatoo",
-    "proenfo_gfc12", "proenfo_gfc14", "proenfo_gfc17",
-    "proenfo_hog", "proenfo_pdb",
-    "redset/15T", "redset/1H", "redset/5T",
-    "restaurant",
-    "rohlik_orders/1D", "rohlik_orders/1W",
-    "rohlik_sales/1D", "rohlik_sales/1W",
-    "rossmann/1D", "rossmann/1W",
-    "solar/1D", "solar/1W",
-    "solar_with_weather/15T", "solar_with_weather/1H",
-    "uci_air_quality/1D", "uci_air_quality/1H",
-    "uk_covid_nation/1D", "uk_covid_nation/1W",
-    "uk_covid_utla/1D", "uk_covid_utla/1W",
-    "us_consumption/1M", "us_consumption/1Q", "us_consumption/1Y",
-    "walmart",
-    "world_co2_emissions", "world_life_expectancy", "world_tourism",
-)
+# Underscore of a fev-bench dataset_config that is a subdirectory of
+# autogluon/fev_datasets: before a frequency (ETT_1H -> ETT/1H) or a boomlet
+# series id (boomlet_1062 -> boomlet/1062).
+_HF_SUBDIR = re.compile(r"_(?=\d+[A-Za-z]+$)|(?<=^boomlet)_")
 
-
-
-# Seasonality per pandas base alias, as autogluon's get_seasonality, which
-# fev-bench's statsforecast baselines combine with the task seasonality.
-_AG_SEASONALITY = {
-    "Y": 1, "Q": 4, "M": 12, "SM": 24, "W": 1, "D": 7, "B": 5,
-    "h": 24, "min": 1440, "s": 1, "ms": 1, "us": 1, "ns": 1,
-}  # fmt: skip
 # Context kept by fev-bench's statsforecast baselines.
 BASELINE_CONTEXT_LENGTH = 1000
 
@@ -119,12 +75,7 @@ BASELINE_CONTEXT_LENGTH = 1000
 def _baseline_seasonality(seasonality: int, freq: str) -> int:
     """Season of fev-bench's Seasonal Naive: the larger of the task's and
     the frequency's, or 1 when it exceeds the context the baseline sees."""
-    offset = pd.tseries.frequencies.to_offset(freq)
-    # Drop the anchor and the start/end suffix: QS-OCT, ME, YE-DEC, ...
-    alias = offset.name.split("-")[0].rstrip("ESe")
-    alias = {"H": "h", "T": "min", "A": "Y", "S": "s", "BM": "M"}.get(alias, alias)
-    base, rest = divmod(_AG_SEASONALITY.get(alias, 1), offset.n)
-    season = max(seasonality, 1 if rest else base)
+    season = max(seasonality, autogluon_seasonality(freq))
     return season if season <= BASELINE_CONTEXT_LENGTH else 1
 
 
@@ -200,7 +151,11 @@ def _select_channel_cols(df, target=None, covariate_cols=()) -> "list[str]":
 
 
 def _encode(values) -> np.ndarray:
-    """Float values of a covariate column, categories as integer codes."""
+    """Float values of a covariate column, categories as integer codes.
+
+    Callers pass the values of all series at once, so a category gets the
+    same code in every series.
+    """
     values = pd.Series(values)
     try:
         return pd.to_numeric(values).to_numpy(np.float32)
@@ -226,8 +181,6 @@ def _static_covariates(df, cols) -> "list[np.ndarray] | None":
     return list(np.stack([_encode(df[c]) for c in cols], axis=-1))
 
 
-# fev-bench dataset_config → HF directory path.
-_HF_PATHS = {path.replace("/", "_"): path for path in FEV_DATASETS}
 
 class Dataset(BaseDataset):
     """AutoGluon fev forecasting dataset.
@@ -281,7 +234,8 @@ class Dataset(BaseDataset):
     def _snapshot(self) -> "list[str]":
         """Snapshot-download parquet files for this dataset_name and
         return their local paths (cache-first, see ``snapshot_hf_files``)."""
-        hf_path = _HF_PATHS[_fev_bench_tasks()[self.dataset_name]["dataset_config"]]
+        config = _fev_bench_tasks()[self.dataset_name]["dataset_config"]
+        hf_path = _HF_SUBDIR.sub("/", config)
         return snapshot_hf_files("autogluon/fev_datasets", hf_path, "*.parquet")
 
     def get_data(self):

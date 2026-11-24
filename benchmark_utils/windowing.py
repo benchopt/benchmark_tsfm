@@ -29,11 +29,20 @@ def impute_nan(series: np.ndarray) -> np.ndarray:
     """Impute NaN targets as gluonts LastValueImputation, used by the
     official GIFT-Eval notebooks: forward-fill each channel, flat-fill
     leading NaNs with the first valid value, 0.0 for all-NaN channels.
+
+    Parameters
+    ----------
+    series : np.ndarray (T, C)
+        One series, time first.
+
+    Returns
+    -------
+    np.ndarray (T, C)
+        ``series`` itself when it has no NaN, else an imputed copy.
     """
-    # Arrow columns can decode to zero-copy read-only views: copy
-    # before writing in place.
-    if not series.flags.writeable and np.isnan(series).any():
-        series = series.copy()
+    if not np.isnan(series).any():
+        return series
+    series = series.copy()
     for c in range(series.shape[1]):
         col = series[:, c]
         nan = np.isnan(col)
@@ -49,8 +58,39 @@ def impute_nan(series: np.ndarray) -> np.ndarray:
     return series
 
 
+def windows_by_distance_to_end(
+    series_list: List[np.ndarray], cutoff_indexes: List[List[int]]
+) -> List[np.ndarray]:
+    """Group the evaluation windows by their distance to the series end.
+
+    Windows at the same distance form one fev-bench evaluation window: they
+    share a cutoff date when the series end together.
+
+    Parameters
+    ----------
+    series_list : list of np.ndarray (T_i, C)
+        The full series.
+    cutoff_indexes : list of list of int
+        For each series, the timesteps at which a window starts.
+
+    Returns
+    -------
+    list of np.ndarray of int
+        One array per distance, sorted by distance, of indexes into the
+        windows flattened series-major then cutoff-minor.
+    """
+    dist = np.array(
+        [
+            len(series) - cutoff
+            for series, cutoffs in zip(series_list, cutoff_indexes)
+            for cutoff in cutoffs
+        ]
+    )
+    return [np.flatnonzero(dist == d) for d in np.unique(dist)]
+
+
 def make_forecasting_splits(
-    series: List[np.ndarray],
+    series_list: List[np.ndarray],
     prediction_length: int,
     n_windows: int = 1,
     stride: Optional[int] = None,
@@ -60,7 +100,8 @@ def make_forecasting_splits(
 
     Parameters
     ----------
-    series : list of (T_i, C) arrays — full time series.
+    series_list : list of np.ndarray (T_i, C)
+        The full series, time first.
     prediction_length : int
     n_windows : int
         Number of rolling evaluation windows per series.
@@ -78,7 +119,7 @@ def make_forecasting_splits(
     cutoff_indexes: List[List[int]] = []
     targets: List[np.ndarray] = []
 
-    for ts in series:
+    for ts in series_list:
         ts = np.asarray(ts)
         T = ts.shape[0]
         cutoffs: List[int] = []
@@ -100,7 +141,7 @@ def make_forecasting_splits(
 
 
 def build_forecasting_data(
-    series: List[np.ndarray],
+    series_list: List[np.ndarray],
     prediction_length: int,
     n_windows: int = 1,
     debug: bool = False,
@@ -125,19 +166,36 @@ def build_forecasting_data(
     ``X_train`` — handing out a fixed pair would either leak the test
     windows or duplicate a slice of ``X_train``.
 
-    Returns a dict with ``X_train``, ``y_train``, ``X_test``, ``y_test``
-    and ``cutoff_indexes``; datasets add their task-specific fields
-    (metrics, freq, seasonality, ...) on top. Given ``covariates`` for every
-    series, it also returns them for the kept series.
+    Parameters
+    ----------
+    series_list : list of np.ndarray (T_i, C)
+        The full series, time first, possibly with NaN.
+    prediction_length : int
+    n_windows : int
+        Number of rolling evaluation windows per series.
+    debug : bool
+        If True, keep a single window per series.
+    min_context : int
+        Minimum history before a window.
+    covariates : Covariates or None
+        Covariates of every series of ``series_list``.
+
+    Returns
+    -------
+    dict
+        ``X_train``, ``y_train``, ``X_test``, ``y_test`` and
+        ``cutoff_indexes``, plus ``covariates`` of the kept series when given
+        and ``nan_mask`` when a target has NaN. Datasets add their
+        task-specific fields (metrics, freq, seasonality, ...) on top.
     """
     test_len = prediction_length * n_windows
     kept = [
         i
-        for i, ts in enumerate(series)
+        for i, ts in enumerate(series_list)
         if ts.shape[0] >= prediction_length + min_context
     ]
-    nan_mask = [np.isnan(series[i]) for i in kept]
-    full_series = [impute_nan(series[i]) for i in kept]
+    nan_mask = [np.isnan(series_list[i]) for i in kept]
+    full_series = [impute_nan(series_list[i]) for i in kept]
     X_train = [ts[: max(1, ts.shape[0] - test_len)] for ts in full_series]
 
     if not full_series:

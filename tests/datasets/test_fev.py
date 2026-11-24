@@ -71,10 +71,19 @@ def test_task_target_gives_channels(target, expected):
     assert fev._select_channel_cols(df, target) == expected
 
 
-def test_every_fev_bench_task_has_hf_data():
-    assert {t["dataset_config"] for t in fev._fev_bench_tasks().values()} <= set(
-        fev._HF_PATHS
-    )
+@pytest.mark.parametrize(
+    "config, path",
+    [
+        ("ETT_1H", "ETT/1H"),
+        ("uk_covid_nation_1D", "uk_covid_nation/1D"),
+        ("LOOP_SEATTLE_5T", "LOOP_SEATTLE/5T"),
+        ("boomlet_1062", "boomlet/1062"),
+        ("fred_md_2025", "fred_md_2025"),
+        ("proenfo_gfc12", "proenfo_gfc12"),
+    ],
+)
+def test_hf_path_of_dataset_config(config, path):
+    assert fev._HF_SUBDIR.sub("/", config) == path
 
 
 def test_covariate_columns_are_not_channels():

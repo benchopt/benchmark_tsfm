@@ -14,6 +14,7 @@ from benchmark_utils.adapters.linear_probe import LinearProbeAdapter
 from benchmark_utils.covariates import Covariates
 from benchmark_utils.inputs import ForecastInput
 from benchmark_utils.outputs import ForecastOutput
+from benchmark_utils.windowing import windows_by_distance_to_end
 
 TaskType = Literal[
     "forecasting", "classification", "anomaly_detection", "event_detection"
@@ -594,20 +595,15 @@ class BaseTSFMSolver(BaseSolver):
 
         # Run in batches so very large datasets do not go through the model
         # as a single oversized batch.
-        # Not a default attribute: benchopt rejects one that differs from a
-        # declared parameter value.
         batch_size = getattr(self, "inference_batch_size", 128)
-        order = np.arange(len(inputs))
         if getattr(self, "cross_learning", False):
             # A model sharing information across a batch must not see two
             # windows of one series together, as the later history holds the
             # earlier target. Batch the windows at the same distance from the
             # series end, like fev-bench's evaluation windows.
-            dist = [x.x[s].shape[0] - x.cutoff_indexes[s][c] for s, c in layout]
-            order = np.argsort(dist, kind="stable")
-            groups = np.split(order, np.flatnonzero(np.diff(np.sort(dist))) + 1)
+            groups = windows_by_distance_to_end(x.x, x.cutoff_indexes)
         else:
-            groups = [order]
+            groups = [np.arange(len(inputs))]
         raw = {}
         for group in groups:
             for start in range(0, len(group), batch_size):
