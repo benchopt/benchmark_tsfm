@@ -30,7 +30,8 @@ date, and the metrics are the benchmark's.
 The task's covariate columns are exposed as :class:`Covariates`:
 ``past_dynamic_columns`` as ``hist_covars``, ``known_dynamic_columns`` as
 ``future_covars`` and ``static_columns`` as ``static_covars``. Dynamic arrays
-span the whole series, and categorical values are encoded as integer codes.
+span the whole series. Categorical values are encoded as integer codes, and
+``hist_categorical`` / ``future_categorical`` flag the dynamic ones.
 """
 
 import functools
@@ -150,35 +151,42 @@ def _select_channel_cols(df, target=None, covariate_cols=()) -> "list[str]":
     ]
 
 
-def _encode(values) -> np.ndarray:
-    """Float values of a covariate column, categories as integer codes.
+def _encode(values) -> "tuple[np.ndarray, bool]":
+    """Float values of a covariate column, categories as integer codes, and
+    whether the column is categorical.
 
-    Callers pass the values of all series at once, so a category gets the
-    same code in every series.
+    As fev, a column is categorical unless its dtype is numeric, so booleans
+    (kept as 0/1) and strings of digits are categories. Callers pass the
+    values of all series at once, so a category gets the same code in every
+    series.
     """
     values = pd.Series(values)
-    try:
-        return pd.to_numeric(values).to_numpy(np.float32)
-    except (ValueError, TypeError):
-        codes = pd.factorize(values)[0]  # -1 for missing values
-        return np.where(codes < 0, np.nan, codes).astype(np.float32)
+    if pd.api.types.is_bool_dtype(values):
+        return values.to_numpy(np.float32), True
+    if pd.api.types.is_numeric_dtype(values):
+        return values.to_numpy(np.float32), False
+    codes = pd.factorize(values)[0]  # -1 for missing values
+    return np.where(codes < 0, np.nan, codes).astype(np.float32), True
 
 
-def _dynamic_covariates(df, cols) -> "list[np.ndarray] | None":
-    """Per-series ``(T, len(cols))`` arrays of the dynamic columns ``cols``."""
+def _dynamic_covariates(df, cols):
+    """Per-series ``(T, len(cols))`` arrays of the dynamic columns ``cols``,
+    and which of them are categorical."""
     if not cols:
-        return None
+        return None, None
     lengths = df[cols[0]].map(len).to_numpy()
     split = np.cumsum(lengths)[:-1]
-    columns = [np.split(_encode(np.concatenate(df[c].to_numpy())), split) for c in cols]
-    return [np.stack(arrays, axis=-1) for arrays in zip(*columns)]
+    encoded = [_encode(np.concatenate(df[c].to_numpy())) for c in cols]
+    columns = [np.split(values, split) for values, _ in encoded]
+    categorical = np.array([is_cat for _, is_cat in encoded])
+    return [np.stack(arrays, axis=-1) for arrays in zip(*columns)], categorical
 
 
 def _static_covariates(df, cols) -> "list[np.ndarray] | None":
     """Per-series ``(len(cols),)`` arrays of the static columns ``cols``."""
     if not cols:
         return None
-    return list(np.stack([_encode(df[c]) for c in cols], axis=-1))
+    return list(np.stack([_encode(df[c])[0] for c in cols], axis=-1))
 
 
 
@@ -295,10 +303,18 @@ class Dataset(BaseDataset):
         if not series_list:
             raise ValueError("All series were skipped (inconsistent channel lengths).")
 
+        hist, hist_categorical = _dynamic_covariates(
+            df, task.get("past_dynamic_columns")
+        )
+        future, future_categorical = _dynamic_covariates(
+            df, task.get("known_dynamic_columns")
+        )
         covariates = Covariates(
             static_covars=_static_covariates(df, task.get("static_columns")),
-            hist_covars=_dynamic_covariates(df, task.get("past_dynamic_columns")),
-            future_covars=_dynamic_covariates(df, task.get("known_dynamic_columns")),
+            hist_covars=hist,
+            future_covars=future,
+            hist_categorical=hist_categorical,
+            future_categorical=future_categorical,
         ).select(kept)
 
         return dict(
@@ -313,7 +329,7 @@ class Dataset(BaseDataset):
             ),
             task=self.task,
             # fev-bench's aggregation, next to the pooled one of GIFT-Eval.
-            metrics=[*FORECASTING_METRICS, "mase_fev", "wql_fev"],
+            metrics=[*FORECASTING_METRICS, "fev_sql", "fev_mase", "fev_wql"],
             prediction_length=pred_len,
             freq=canonical_freq,
             seasonality=task["seasonality"],

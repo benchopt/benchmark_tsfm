@@ -25,14 +25,23 @@ class Covariates:
     static_covars
         ``None``, or a length-``len(x)`` sequence of arrays of shape (channels,)
     hist_covars
-        ``None``, or a length-``len(x)`` sequence of arrays of shape (time, channels)
+        ``None``, or a length-``len(x)`` sequence of arrays of shape
+        (time, channels). Past-only covariates, unknown over the horizon.
     future_covars
-        ``None``, or a length-``len(x)`` sequence of arrays of shape (time, channels)
+        ``None``, or a length-``len(x)`` sequence of arrays of shape
+        (time, channels). Known covariates, given over the history and the
+        horizon.
+    hist_categorical, future_categorical
+        ``None``, or a boolean array of shape (channels,), shared by all
+        series: which channels of ``hist_covars`` / ``future_covars`` hold
+        integer category codes.
     """
 
     static_covars: Sequence[np.ndarray] | None = None
     hist_covars: Sequence[np.ndarray] | None = None
     future_covars: Sequence[np.ndarray] | None = None
+    hist_categorical: np.ndarray | None = None
+    future_categorical: np.ndarray | None = None
 
     def __post_init__(self):
         # Every provided (non-None) field must cover the same set of series.
@@ -59,14 +68,16 @@ class Covariates:
             *(
                 None if f is None else [f[i] for i in series_idx]
                 for f in (self.static_covars, self.hist_covars, self.future_covars)
-            )
+            ),
+            self.hist_categorical,
+            self.future_categorical,
         )
 
     def slice(self, series_idx: int, cutoff: int, horizon: int) -> "Covariates":
         """Covariates for a single ``(series, cutoff)`` window.
 
-        Selects series ``series_idx`` and slices its time axis: history up to
-        ``cutoff`` and the future window ``[cutoff, cutoff + horizon)``.
+        Selects series ``series_idx`` and slices its time axis: the past-only
+        covariates up to ``cutoff``, the known ones up to ``cutoff + horizon``.
         """
         return Covariates(
             static_covars=None
@@ -77,5 +88,7 @@ class Covariates:
             else [self.hist_covars[series_idx][:cutoff]],
             future_covars=None
             if self.future_covars is None
-            else [self.future_covars[series_idx][cutoff : cutoff + horizon]],
+            else [self.future_covars[series_idx][: cutoff + horizon]],
+            hist_categorical=self.hist_categorical,
+            future_categorical=self.future_categorical,
         )

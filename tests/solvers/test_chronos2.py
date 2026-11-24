@@ -7,6 +7,7 @@ import pytest
 import torch
 from benchopt.benchmark import Benchmark
 
+from benchmark_utils.covariates import Covariates
 from benchmark_utils.forecasting_constants import CANONICAL_QUANTILE_LEVELS
 from benchmark_utils.inputs import ForecastInput
 
@@ -53,3 +54,37 @@ def test_cross_learning_batches_one_window_per_series(cross_learning):
     else:
         assert batches == [[10, 15, 5, 10]]
     assert [q[:, 0, 0, 0].tolist() for q in out.quantiles] == [[10, 15], [5, 10]]
+
+
+def test_covariates_follow_fev_bench():
+    solver = Solver.get_instance(model_size="small")
+    calls = []
+
+    class FakePipeline:
+        def predict_quantiles(self, inputs, prediction_length, **kwargs):
+            calls.append((inputs, kwargs))
+            return [torch.zeros(1, prediction_length, 9) for _ in inputs], None
+
+    solver.model = FakePipeline()
+    hist = np.arange(10.0)[:, None]
+    future = np.stack([np.arange(10.0) + 100, [0, 1] * 5], axis=-1)
+    x = ForecastInput(
+        x=[np.zeros((10, 1))],
+        cutoff_indexes=[[6]],
+        covariates=Covariates(
+            hist_covars=[hist],
+            future_covars=[future],
+            future_categorical=np.array([False, True]),
+        ),
+    )
+    out = solver.forecast(x, 2, quantile_levels=CANONICAL_QUANTILE_LEVELS)
+    assert out.quantiles[0].shape == (1, 2, 1, 9)
+    ((inp,), kwargs) = calls[0]
+    assert kwargs["batch_size"] == 100
+    # past-only covariates over the history, known ones over history and horizon
+    assert inp["past_covariates"]["hist_0"].tolist() == list(range(6))
+    assert inp["past_covariates"]["future_0"].tolist() == list(range(100, 106))
+    assert inp["future_covariates"]["future_0"].tolist() == [106, 107]
+    # categories are passed as strings, which Chronos-2 encodes itself
+    assert inp["future_covariates"]["future_1"].tolist() == ["0.0", "1.0"]
+    assert "hist_0" not in inp["future_covariates"]

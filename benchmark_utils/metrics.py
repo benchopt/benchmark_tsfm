@@ -69,12 +69,11 @@ def _seasonal_naive_scales_per_window(
     cutoff_indexes: Iterable[Sequence[int]],
     seasonality: int,
     nan_masks: Sequence[np.ndarray | None] | None = None,
+    lag1_fallback: bool = True,
 ) -> np.ndarray:
     """Seasonal-naive scale per window and channel, following
     ``gluonts.ev.ts_stats.seasonal_error`` on the context available at
-    each cutoff (with its fall-back to seasonality 1 when the context
-    is shorter than the season). Diffs touching an imputed point are
-    excluded.
+    each cutoff. Diffs touching an imputed point are excluded.
 
     Parameters
     ----------
@@ -85,6 +84,9 @@ def _seasonal_naive_scales_per_window(
     seasonality : int
     nan_masks : list of np.ndarray (T_i, C) of bool, or None
         NaN locations of the targets before imputation.
+    lag1_fallback : bool
+        With a context not longer than the season, fall back to
+        seasonality 1 as gluonts. Otherwise the scale is NaN, as fev.
 
     Returns
     -------
@@ -98,7 +100,12 @@ def _seasonal_naive_scales_per_window(
         series = np.asarray(series)
         for cutoff in cutoffs:
             ctx = series[:cutoff]
-            s = seasonality if seasonality < ctx.shape[0] else 1
+            s = seasonality
+            if seasonality >= ctx.shape[0]:
+                if not lag1_fallback:
+                    scales.append(np.full(series.shape[1], np.nan))
+                    continue
+                s = 1
             diff = np.abs(ctx[s:] - ctx[:-s])
             if nan_mask is not None:
                 nm = nan_mask[:cutoff]
@@ -330,7 +337,7 @@ def wql(
 
 
 
-def mase_fev(
+def fev_mase(
     y_true: np.ndarray,
     forecast: ForecastOutput,
     seasonality: int = 1,
@@ -341,13 +348,15 @@ def mase_fev(
     **_,
 ) -> float:
     """MASE aggregated as fev-bench: mean over the series and horizon of
-    each window and target channel, then over channels and windows.
+    each window and target channel, then over channels and windows. A
+    context not longer than the season has no scale, and its errors are
+    left out, as fev.
 
     ``series_list`` holds the full series, (T_i, C) arrays, and
     ``cutoff_indexes`` the start of their windows.
     """
     scales = _seasonal_naive_scales_per_window(
-        series_list, cutoff_indexes, seasonality, nan_masks
+        series_list, cutoff_indexes, seasonality, nan_masks, lag1_fallback=False
     )
     err = np.abs(y_true - _point_from_forecast(forecast)) / scales[:, None, :]
     if valid_mask is not None:
@@ -364,7 +373,37 @@ def mase_fev(
     return float(np.mean(per_window))
 
 
-def wql_fev(
+def fev_sql(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    seasonality: int = 1,
+    series_list: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    nan_masks: Sequence[np.ndarray] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """Scaled Quantile Loss, fev-bench's primary metric: the quantile loss
+    over the seasonal-naive scale, averaged over the quantile levels and
+    aggregated as :func:`fev_mase`.
+    """
+    scales = _seasonal_naive_scales_per_window(
+        series_list, cutoff_indexes, seasonality, nan_masks, lag1_fallback=False
+    )
+    q, levels = _stacked(forecast)
+    y = y_true if valid_mask is None else np.where(valid_mask, y_true, np.nan)
+    ql = 2 * np.abs((y[..., None] - q) * ((y[..., None] <= q) - levels))
+    sql = ql / scales[:, None, :, None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.mean(np.nanmean(sql[w], axis=(0, 1, 3)))
+            for w in windows_by_distance_to_end(series_list, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
+
+
+def fev_wql(
     y_true: np.ndarray,
     forecast: ForecastOutput,
     series_list: Sequence[np.ndarray] | None = None,
@@ -776,8 +815,9 @@ FORECASTING_METRICS = {
     "mcis": mcis,
     "pinball": pinball,
     "skill_score_ratio": skill_score_ratio,
-    "mase_fev": mase_fev,
-    "wql_fev": wql_fev,
+    "fev_sql": fev_sql,
+    "fev_mase": fev_mase,
+    "fev_wql": fev_wql,
 }
 
 CLASSIFICATION_METRICS = {

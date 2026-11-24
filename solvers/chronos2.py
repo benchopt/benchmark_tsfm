@@ -9,13 +9,17 @@ Additionally provides:
 
 Model loading is done in ``set_objective`` (untimed). Inference batches
 (series, cutoff) pairs into ``Chronos2Pipeline.predict_quantiles`` calls:
-the pipeline accepts a list of variable-length tensors and applies
-left-padding internally.
+the pipeline accepts a list of variable-length inputs and applies
+left-padding internally. As fev-bench's ``predict_fev``, the covariates go
+along with their target: past-only ones over the history, known ones over
+the history and the horizon, categories as strings.
 
 References
 ----------
     https://github.com/amazon-science/chronos-forecasting
 """
+
+import sys
 
 import numpy as np
 import torch
@@ -42,6 +46,11 @@ class Solver(BaseTSFMSolver):
     """
 
     name = "Chronos2"
+
+    # Chronos-2 batches internally, by ``batch_size`` rows of targets and
+    # covariates, so each call gets a whole group of windows as fev-bench.
+    inference_batch_size = sys.maxsize
+    batch_size = 100
 
     requirements = ["pip::chronos-forecasting>=2.2,<3", "pip::einops"]
 
@@ -81,12 +90,30 @@ class Solver(BaseTSFMSolver):
 
     def forecast_batch(self, inputs, covariates, prediction_length):
         # inputs: list of (T, C) tensors; Chronos-2 expects (C, T)
-        chrono_inputs = [inp.T for inp in inputs]
+        chrono_inputs = []
+        for inp, cov in zip(inputs, covariates):
+            past, future = {}, {}
+            for kind, arrays, categorical in (
+                ("hist", cov.hist_covars, cov.hist_categorical),
+                ("future", cov.future_covars, cov.future_categorical),
+            ):
+                if arrays is None:
+                    continue
+                for j, col in enumerate(np.asarray(arrays[0]).T):
+                    if categorical is not None and categorical[j]:
+                        col = col.astype(str)
+                    past[f"{kind}_{j}"] = col[: len(inp)]
+                    if kind == "future":
+                        future[f"{kind}_{j}"] = col[len(inp) :]
+            chrono_inputs.append(
+                {"target": inp.T, "past_covariates": past, "future_covariates": future}
+            )
         with torch.no_grad():
             output, _ = self.model.predict_quantiles(
                 chrono_inputs,
                 prediction_length=prediction_length,
                 quantile_levels=list(self.quantile_levels),
+                batch_size=self.batch_size,
                 cross_learning=self.cross_learning,
             )
         return [rearrange(pred, "c h q -> h c q") for pred in output]

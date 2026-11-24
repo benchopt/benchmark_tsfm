@@ -100,13 +100,20 @@ def test_covariates_encode_categories_as_codes():
         "store": ["x", "y", "x"],
         "promo": [np.array([0, 1]), np.array([1, 1, 0]), np.array([0])],
         "holiday": [np.array(["a", "0"]), np.array(["0", "0", "b"]), np.array(["a"])],
+        "snap": [np.array([True, False]), np.array([False] * 3), np.array([True])],
+        "code": [np.array(["1", "2"]), np.array(["2", "2", "1"]), np.array(["1"])],
     })
     static = fev._static_covariates(df, ["store"])
     assert [s.tolist() for s in static] == [[0.0], [1.0], [0.0]]
-    dynamic = fev._dynamic_covariates(df, ["promo", "holiday"])
+    dynamic, categorical = fev._dynamic_covariates(df, ["promo", "holiday"])
     assert [a.shape for a in dynamic] == [(2, 2), (3, 2), (1, 2)]
     np.testing.assert_array_equal(dynamic[1], [[1, 1], [1, 1], [0, 2]])
-    assert fev._dynamic_covariates(df, None) is None
+    assert categorical.tolist() == [False, True]
+    # as fev, only numeric dtypes are numeric: booleans and digit strings are not
+    dynamic, categorical = fev._dynamic_covariates(df, ["snap", "code"])
+    np.testing.assert_array_equal(dynamic[0], [[1, 0], [0, 1]])
+    assert categorical.tolist() == [True, True]
+    assert fev._dynamic_covariates(df, None) == (None, None)
 
 
 @pytest.mark.parametrize(

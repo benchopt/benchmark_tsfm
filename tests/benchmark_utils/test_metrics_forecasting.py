@@ -7,10 +7,11 @@ from benchmark_utils.metrics import (
     _seasonal_naive_scales_per_window,
     mae,
     mase,
-    mase_fev,
+    fev_mase,
+    fev_sql,
     smape,
     windows_valid_mask,
-    wql_fev,
+    fev_wql,
 )
 from benchmark_utils.outputs import ForecastOutput
 
@@ -139,13 +140,27 @@ def test_fev_metrics_average_per_window_and_channel():
     y_true = np.array([[[2.0, 20.0]], [[2.0, 20.0]]])
     forecast = _point_forecast(np.array([[[1.0, 10.0]], [[3.0, 30.0]]]))
     # |err| / scale is 1 everywhere
-    assert mase_fev(y_true, forecast, 1, series_list, cutoffs) == pytest.approx(1.0)
+    assert fev_mase(y_true, forecast, 1, series_list, cutoffs) == pytest.approx(1.0)
     # per channel 2 * 0.5 * mean|err| / mean|y|: 1 / 2 and 10 / 20
-    assert wql_fev(y_true, forecast, series_list, cutoffs) == pytest.approx(0.5)
+    assert fev_wql(y_true, forecast, series_list, cutoffs) == pytest.approx(0.5)
+    # a point forecast has one level 0.5: QL = |err| and SQL = MASE
+    assert fev_sql(y_true, forecast, 1, series_list, cutoffs) == pytest.approx(1.0)
 
 
-def test_wql_fev_floors_the_scale_at_one():
+def test_fev_scaled_metrics_drop_windows_shorter_than_the_season():
+    # The first series' context (3 steps) is not longer than the season (3):
+    # fev leaves it out, where the pooled MASE falls back to lag 1.
+    series_list = [np.arange(5.0)[:, None], np.tile([0.0, 2.0], 4)[:, None]]
+    cutoffs = [[3], [6]]
+    y_true = np.array([[[3.0], [4.0]], [[0.0], [2.0]]])
+    forecast = _point_forecast(y_true + 2.0)
+    # second series: scale |x_t - x_{t-3}| = 2, |err| = 2
+    assert fev_mase(y_true, forecast, 3, series_list, cutoffs) == pytest.approx(1.0)
+    assert fev_sql(y_true, forecast, 3, series_list, cutoffs) == pytest.approx(1.0)
+
+
+def test_fev_wql_floors_the_scale_at_one():
     series_list = [np.zeros((3, 1))]
     y_true = np.zeros((1, 1, 1))
     forecast = _point_forecast(np.full((1, 1, 1), 0.5))
-    assert wql_fev(y_true, forecast, series_list, [[2]]) == pytest.approx(0.5)
+    assert fev_wql(y_true, forecast, series_list, [[2]]) == pytest.approx(0.5)
