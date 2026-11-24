@@ -48,6 +48,8 @@ is a fitted :class:`~benchmark_utils.adapters.base.BaseTSFMAdapter`.
 See that module for per-task predict signatures.
 """
 
+import time
+
 import numpy as np
 from benchopt import BaseObjective
 
@@ -129,17 +131,22 @@ class Objective(BaseObjective):
     # ------------------------------------------------------------------
 
     def evaluate_result(self, model):
+        # The adapter predicts here, so the inference cost is timed here. The
+        # forecasting leakage probe is left out of it.
+        start = time.perf_counter()
         match self.task:
             case "forecasting":
-                return self._eval_forecasting(model)
+                result = self._eval_forecasting(model)
             case "classification":
-                return self._eval_classification(model)
+                result = self._eval_classification(model)
             case "anomaly_detection":
-                return self._eval_anomaly_detection(model)
+                result = self._eval_anomaly_detection(model)
             case "event_detection":
-                return self._eval_event_detection(model)
+                result = self._eval_event_detection(model)
             case _:
                 raise ValueError(f"Unknown task: {self.task!r}")
+        result.setdefault("predict_time", time.perf_counter() - start)
+        return result
 
     # --- forecasting ---------------------------------------------------
 
@@ -158,14 +165,18 @@ class Objective(BaseObjective):
         # any sensitivity to the future means the reported metrics would be
         # invalid, so we surface ``leakage=1`` and set every metric to +inf
         # (the worst value, since benchopt minimises).
-        report = detect_forecast_leakage(model, forecast_input)
+        start = time.perf_counter()
+        output = model.predict(forecast_input)
+        predict_time = time.perf_counter() - start
+        report = detect_forecast_leakage(model, forecast_input, baseline=output)
         if report.leaked:
             return {name: float("inf") for name in self.metrics} | {
                 "value": float("inf"),
                 "leakage": 1.0,
+                "predict_time": predict_time,
             }
 
-        forecast = model.predict(forecast_input).flatten()  # (M, H, C, Q)
+        forecast = output.flatten()  # (M, H, C, Q)
 
         # Concatenate per-series targets into a single (M, H, C) array, in the
         # same order the flattened forecast iterates (series-major, cutoff-minor).
@@ -193,6 +204,7 @@ class Objective(BaseObjective):
             name: ALL_METRICS[name](y_true, forecast, **kwargs) for name in self.metrics
         }
         result["leakage"] = 0.0
+        result["predict_time"] = predict_time
         # benchopt's stopping criterion monitors a single 'value' key; expose
         # the primary requested metric under that name (mirrors the leakage
         # path above, which sets value=inf as the worst possible score).
