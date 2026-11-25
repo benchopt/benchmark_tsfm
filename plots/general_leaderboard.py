@@ -10,23 +10,17 @@ All Elos use Bradley-Terry MLE + 200-round bootstrap 95% CI.
 
 from __future__ import annotations
 
-import os
-import sys
-
-# elo.py lives in the same plots/ directory; add it to sys.path so we can
-# import its shared helpers without duplicating code.
-sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np
 import pandas as pd
 from benchopt import BasePlot
-from elo import (  # noqa: E402
+from benchmark_utils.elo import (
     ANCHOR_PREFERENCES,
     ELO_ANCHOR,
     N_BOOTSTRAP,
     _elo_table,
     _short,
-    is_higher_better,
 )
+from benchmark_utils.metrics import is_higher_better
 
 # Task → results column used for that task's Elo and metric cell. Direction
 # comes from is_higher_better — never hardcoded here.

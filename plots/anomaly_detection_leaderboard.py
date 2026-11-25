@@ -9,13 +9,10 @@ datasets. Sorted by Elo descending.
 
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(__file__))
 import pandas as pd
 from benchopt import BasePlot
-from elo import _elo_table, _short, is_higher_better  # noqa: E402
+from benchmark_utils.elo import _elo_table, _short
+from benchmark_utils.metrics import is_higher_better
 
 _ELO_COL = "objective_auc_pr"
 
