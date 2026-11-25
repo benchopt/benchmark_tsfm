@@ -107,7 +107,8 @@ def test_covariates_encode_categories_as_codes():
     assert [s.tolist() for s in static] == [[0.0], [1.0], [0.0]]
     dynamic, categorical = fev._dynamic_covariates(df, ["promo", "holiday"])
     assert [a.shape for a in dynamic] == [(2, 2), (3, 2), (1, 2)]
-    np.testing.assert_array_equal(dynamic[1], [[1, 1], [1, 1], [0, 2]])
+    # categories coded in sorted order: "0", "a", "b"
+    np.testing.assert_array_equal(dynamic[1], [[1, 0], [1, 0], [0, 2]])
     assert categorical.tolist() == [False, True]
     # as fev, only numeric dtypes are numeric: booleans and digit strings are not
     dynamic, categorical = fev._dynamic_covariates(df, ["snap", "code"])

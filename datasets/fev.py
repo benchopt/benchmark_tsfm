@@ -156,16 +156,16 @@ def _encode(values) -> "tuple[np.ndarray, bool]":
     whether the column is categorical.
 
     As fev, a column is categorical unless its dtype is numeric, so booleans
-    (kept as 0/1) and strings of digits are categories. Callers pass the
-    values of all series at once, so a category gets the same code in every
-    series.
+    (kept as 0/1) and strings of digits are categories, coded in sorted
+    order. Callers pass the values of all series at once, so a category gets
+    the same code in every series.
     """
     values = pd.Series(values)
     if pd.api.types.is_bool_dtype(values):
         return values.to_numpy(np.float32), True
     if pd.api.types.is_numeric_dtype(values):
         return values.to_numpy(np.float32), False
-    codes = pd.factorize(values)[0]  # -1 for missing values
+    codes = pd.factorize(values, sort=True)[0]  # -1 for missing values
     return np.where(codes < 0, np.nan, codes).astype(np.float32), True
 
 
