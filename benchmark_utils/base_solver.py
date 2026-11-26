@@ -271,7 +271,8 @@ class BaseTSFMSolver(BaseSolver):
         Task metadata like prediction_length, n_classes, etc.
 
     model
-        The loaded TSFM model (cached by model_id across set_objective calls).
+        The loaded TSFM model, cached by model_id across set_objective calls
+        and kept when the same solver runs on another dataset.
 
     device
         "cuda" or "cpu", automatically selected in set_objective.
@@ -299,6 +300,10 @@ class BaseTSFMSolver(BaseSolver):
     # Single fit/predict pass: pin it so the cache key never depends on the
     # Objective's lazily inherited value.
     sampling_strategy = "run_once"
+
+    # The weights do not depend on the data: benchopt keeps them when the same
+    # solver runs on another dataset, and frees them with the solver.
+    keep_state = ("model", "_loaded_model_id")
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
