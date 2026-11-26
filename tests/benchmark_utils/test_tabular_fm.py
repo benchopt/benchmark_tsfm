@@ -96,7 +96,7 @@ class _FakeSolver(TabularFMSolver):
 
 
 def _fit(task, X_train, y_train=None, **meta):
-    solver = _FakeSolver(max_context_length=32, inference_batch_size=4096)
+    solver = _FakeSolver.get_instance(max_context_length=32, inference_batch_size=4096)
     solver.get_seed = lambda **kwargs: 0  # no benchopt run context here
     solver.set_objective(X_train, y_train, task, **meta)
     solver.run(None)
