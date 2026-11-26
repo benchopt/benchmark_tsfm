@@ -1,8 +1,8 @@
-"""Leaderboards shared by the benchopt plots and the arena page.
+"""Leaderboards shared by the benchopt plots and the leaderboard page.
 
 The leaderboard plots (``plots/*leaderboard.py``, ``plots/elo.py``) build their
-tables with ``leaderboard_rows`` and the helpers above it. The arena page
-(``html/arena.mako.html``) renders ``build_arena(df)``: per task, a "board"
+tables with ``leaderboard_rows`` and the helpers above it. The leaderboard page
+(``html/leaderboard.mako.html``) renders ``build_leaderboard(df)``: per task, a "board"
 ranking the solvers by Elo, with their aggregated metrics, pairwise win rates
 and per-dataset scores.
 """
@@ -300,8 +300,8 @@ def build_boards(df):
     return boards
 
 
-def build_arena(df):
-    """Arena page data: the boards and a few stats, JSON serializable.
+def build_leaderboard(df):
+    """Leaderboard page data: the boards and a few stats, JSON serializable.
 
     ``df`` are benchopt results, ideally with the unique short names of
     ``benchopt.plotting.short_labels.shorten_names``.

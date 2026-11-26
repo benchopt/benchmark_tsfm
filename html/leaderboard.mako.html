@@ -1,11 +1,11 @@
 <%!
     import json
-    from benchmark_utils.plot_utils import build_arena
+    from benchmark_utils.plot_utils import build_leaderboard
 %>
 <%
     # Escape "<" so that no name can close the script tag holding the data.
-    arena = json.dumps(build_arena(result['df']), allow_nan=False)
-    arena = arena.replace("<", "\\u003c")
+    leaderboard = json.dumps(build_leaderboard(result['df']), allow_nan=False)
+    leaderboard = leaderboard.replace("<", "\\u003c")
 %>
 <!DOCTYPE html>
 <html lang="en">
@@ -218,7 +218,7 @@ document.documentElement.style.colorScheme = schemes[theme];
     </nav>
   </header>
 
-  <div id="arena">
+  <div id="leaderboard">
     <div class="tabs" id="tabs" role="tablist" aria-label="Task"></div>
 
     <section>
@@ -282,10 +282,10 @@ document.documentElement.style.colorScheme = schemes[theme];
 </main>
 <div id="tip" role="status"></div>
 
-<script id="arena-data" type="application/json">${arena}</script>
+<script id="leaderboard-data" type="application/json">${leaderboard}</script>
 <script>
 <%text>
-const arena = JSON.parse(document.getElementById('arena-data').textContent);
+const leaderboard = JSON.parse(document.getElementById('leaderboard-data').textContent);
 const byId = id => document.getElementById(id);
 
 // DOM helpers. Children given as strings become text nodes: the names come
@@ -557,7 +557,7 @@ function renderScores() {
 
 // ---- Page ---------------------------------------------------------------
 function select(key) {
-  board = arena.boards.find(b => b.key === key) || arena.boards[0];
+  board = leaderboard.boards.find(b => b.key === key) || leaderboard.boards[0];
   sort = { id: 'elo', dir: -1 };
   for (const tab of byId('tabs').children) {
     tab.setAttribute('aria-selected', String(tab.dataset.key === board.key));
@@ -575,19 +575,19 @@ function select(key) {
   renderBoard(); renderMatrix(); renderPareto(); renderScores();
 }
 
-const stats = [['', arena.n_models, ' models'], ['', arena.n_datasets, ' datasets'],
-  ['', arena.boards.filter(b => b.key !== 'overall').length, ' tasks'], ['last run ', arena.updated, '']];
+const stats = [['', leaderboard.n_models, ' models'], ['', leaderboard.n_datasets, ' datasets'],
+  ['', leaderboard.boards.filter(b => b.key !== 'overall').length, ' tasks'], ['last run ', leaderboard.updated, '']];
 byId('stats').append(...stats.filter(s => s[1] !== null).map(([before, value, after]) =>
   el('span', {}, before, el('b', {}, String(value)), after)));
 
-if (arena.boards.length) {
-  byId('tabs').append(...arena.boards.map(b => el('button', {
+if (leaderboard.boards.length) {
+  byId('tabs').append(...leaderboard.boards.map(b => el('button', {
     role: 'tab', 'data-key': b.key, onclick: () => select(b.key),
   }, el('span', { class: 'task' }, b.label),
      el('span', { class: 'leader' }, 'Led by ' + b.models[0].name))));
   select(location.hash.slice(1));
 } else {
-  byId('arena').replaceChildren(el('p', { class: 'card empty' },
+  byId('leaderboard').replaceChildren(el('p', { class: 'card empty' },
     'Not enough results to rank yet: a board needs at least 2 models that ran on the same 2 datasets of a task.'));
 }
 </%text>

@@ -1,11 +1,11 @@
-"""Check the leaderboards and arena page data on a small synthetic table."""
+"""Check the leaderboards and leaderboard page data on a small synthetic table."""
 
 import json
 
 import numpy as np
 import pandas as pd
 
-from benchmark_utils.plot_utils import build_arena, leaderboard_rows
+from benchmark_utils.plot_utils import build_leaderboard, leaderboard_rows
 
 
 def _results():
@@ -35,11 +35,11 @@ def _results():
     return pd.DataFrame(rows)
 
 
-def test_build_arena():
-    arena = build_arena(_results())
-    json.dumps(arena, allow_nan=False)  # embedded as JSON in the page
+def test_build_leaderboard():
+    leaderboard = build_leaderboard(_results())
+    json.dumps(leaderboard, allow_nan=False)  # embedded as JSON in the page
 
-    boards = {b["key"]: b for b in arena["boards"]}
+    boards = {b["key"]: b for b in leaderboard["boards"]}
     assert list(boards) == ["overall", "forecasting", "classification"]
     assert len(boards["overall"]["datasets"]) == 6
     # ClfOnly did not run every task: it is only ranked on its own.
