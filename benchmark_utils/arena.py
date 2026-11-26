@@ -12,15 +12,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from benchmark_utils.elo import _elo_table, _find_anchor_idx, _pairwise_wins
 from benchmark_utils.metrics import is_higher_better
 
-# ponytail: the Elo fit and the metrics of each task are defined by the plots,
+# ponytail: the metrics of each task are defined by the plots,
 # which import each other the same way. Move them here if this ever hurts.
 sys.path.insert(0, str(Path(__file__).parent.parent / "plots"))
 import anomaly_detection_leaderboard  # noqa: E402
 import classification_leaderboard  # noqa: E402
 import forecasting_leaderboard  # noqa: E402
-from elo import _elo_table, _find_anchor_idx, _pairwise_wins  # noqa: E402
 
 # key: (label, leaderboard defining the metrics, metrics relative to baseline)
 TASKS = {
