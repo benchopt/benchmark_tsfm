@@ -1,11 +1,11 @@
-"""Check the arena page data on a small synthetic results table."""
+"""Check the leaderboards and arena page data on a small synthetic table."""
 
 import json
 
 import numpy as np
 import pandas as pd
 
-from benchmark_utils.arena import build_arena
+from benchmark_utils.plot_utils import build_arena, leaderboard_rows
 
 
 def _results():
@@ -58,6 +58,26 @@ def test_build_arena():
 
     # Forecasting metrics are relative to the baseline, lower is better.
     forecasting = boards["forecasting"]
-    assert forecasting["columns"][0] == {"label": "rWQL", "higher": False}
+    assert forecasting["columns"][0] == {
+        "label": "rWQL",
+        "col": "objective_wql",
+        "higher": False,
+    }
     rwql = {m["name"]: m["metrics"][0] for m in forecasting["models"]}
     assert rwql["SeasonalNaive"] == 1 and rwql["Best"] < 1 < rwql["Worst"]
+
+
+def test_leaderboard_rows():
+    rows = leaderboard_rows(_results(), "classification")
+    assert [r[:2] for r in rows] == [
+        ["1", "Best"],
+        ["2", "ClfOnly"],
+        ["3", "SeasonalNaive"],
+        ["4", "Worst"],
+    ]
+    assert rows[2][2].startswith("**1000**")
+    # Classification metrics are plain means; missing metrics are "—".
+    assert 0 < rows[0][3] <= 1 and rows[0][4:] == ["—", "—"]
+    assert leaderboard_rows(_results(), "anomaly_detection")[0][0] == (
+        "(no anomaly detection data)"
+    )

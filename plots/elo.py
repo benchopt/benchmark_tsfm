@@ -12,6 +12,7 @@ from benchmark_utils.elo import (
     _find_anchor_idx,
 )
 from benchmark_utils.metrics import is_higher_better
+from benchmark_utils.plot_utils import elo_scores, pivot
 from benchopt import BasePlot
 
 
@@ -50,29 +51,13 @@ class Plot(BasePlot):
     }
 
     def plot(self, df, objective_column):
-        pivot = df.pivot_table(
-            index="solver_name",
-            columns="dataset_name",
-            values=objective_column,
-            aggfunc="mean",
-        )
-        # For higher-is-better metrics, negate so that _pairwise_wins
-        # (which treats lower as better) computes wins correctly.
-        if is_higher_better(objective_column):
-            pivot = -pivot
-
-        # Strict clean: drop datasets where any solver is NaN (Elo needs
-        # complete games), then drop all-tied datasets (variance == 0).
-        pivot = pivot.loc[:, pivot.notna().all(axis=0)]
-        if pivot.shape[1] > 0:
-            var = pivot.var(axis=0, skipna=False)
-            pivot = pivot.loc[:, var > 0]
-
-        k, n = pivot.shape
-        if k < 2 or n < 2:
+        # Lower-is-better scores on the datasets usable for Elo, see
+        # benchmark_utils.plot_utils.elo_scores.
+        scores = elo_scores(df, objective_column)
+        if scores is None:
             return [{"y": [0.0], "label": "(insufficient data)", "text": ""}]
 
-        table, _ = _elo_table(pivot)
+        table, _ = _elo_table(scores)
         bars = []
         for row in table.itertuples(index=False):
             bars.append(
@@ -94,15 +79,10 @@ class Plot(BasePlot):
         # Re-derive the anchor name from the same data the plot() call saw
         # so the title accurately reflects which solver sits at 1000.
         anchor_name = None
-        pivot = df.pivot_table(
-            index="solver_name",
-            columns="dataset_name",
-            values=objective_column,
-            aggfunc="mean",
-        )
-        pivot = pivot.loc[:, pivot.notna().all(axis=0)]
-        if pivot.shape[0] >= 2:
-            _, anchor_name = _find_anchor_idx(list(pivot.index))
+        scores = pivot(df, objective_column)
+        scores = scores.loc[:, scores.notna().all(axis=0)]
+        if scores.shape[0] >= 2:
+            _, anchor_name = _find_anchor_idx(list(scores.index))
 
         if anchor_name:
             anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"
