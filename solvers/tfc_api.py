@@ -294,12 +294,13 @@ class Solver(BaseSolver):
         "batch_size": [256],
     }
 
-    def skip(self, task, **kwargs):
-        if task not in SUPPORTED_TASKS:
-            return True, f"TFC-API solver does not support task={task!r}"
-        if os.getenv("TFC_API_KEY") is None:
-            return True, "TFC_API_KEY environment variable not set"
-        return False, None
+    def skip(self):
+        reason = None
+        if self.dataset_.task not in SUPPORTED_TASKS:
+            reason = f"TFC-API solver does not support task={self.dataset_.task!r}"
+        elif os.getenv("TFC_API_KEY") is None:
+            reason = "TFC_API_KEY environment variable not set"
+        return reason
 
     def set_objective(self, X_train, y_train, task, **meta):
         from theforecastingcompany import TFCClient

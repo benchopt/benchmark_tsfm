@@ -282,7 +282,7 @@ class BaseTSFMSolver(BaseSolver):
 
     inference_batch_size
         Max number of (series, cutoff) windows sent to the model per
-        forward call. Subclasses may override this to tune memory/throughput.
+        forward call, 128 unless the subclass declares it as a parameter.
     """
 
     supported_tasks: set[TaskType]
@@ -296,13 +296,14 @@ class BaseTSFMSolver(BaseSolver):
     device: str | torch.device
     dtype: str | torch.dtype
 
+    # Single fit/predict pass: pin it so the cache key never depends on the
+    # Objective's lazily inherited value.
+    sampling_strategy = "run_once"
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
         self._loaded_model_id: str | None = None
         self.model: Any = None
-
-        # Possibly overridden by kwargs:
-        self.inference_batch_size = 128
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -441,11 +442,13 @@ class BaseTSFMSolver(BaseSolver):
             case _:
                 raise NotImplementedError(f"Unknown task: {task!r}")
 
-    def skip(self, task: TaskType, **_: Any) -> tuple[bool, str | None]:
+    def skip(self) -> str | None:
         """Skip unsupported tasks."""
+        task = self.dataset_.task
+        reason = None
         if task not in self.supported_tasks:
-            return True, f"{self.name} solver does not support task={task!r}"
-        return False, None
+            reason = f"{self.name} solver does not support task={task!r}"
+        return reason
 
     def set_objective(
         self,
@@ -591,9 +594,12 @@ class BaseTSFMSolver(BaseSolver):
 
         # Run in batches so very large datasets do not go through the model
         # as a single oversized batch. Maintains ordering.
+        # Not a default attribute: benchopt rejects one that differs from a
+        # declared parameter value.
+        batch_size = getattr(self, "inference_batch_size", 128)
         raw: list[torch.Tensor] = []
-        for start in range(0, len(inputs), self.inference_batch_size):
-            end = start + self.inference_batch_size
+        for start in range(0, len(inputs), batch_size):
+            end = start + batch_size
             raw.extend(
                 self.forecast_batch(
                     inputs[start:end], covariates[start:end], prediction_length

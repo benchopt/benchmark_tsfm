@@ -84,11 +84,7 @@ class _NoEventPredictor(BaseTSFMAdapter):
 
 
 class Solver(BaseSolver):
-    """Naive baseline — no model required.
-
-    Supports all three tasks; uses ``skip()`` only to guard against unexpected
-    task names.
-    """
+    """Naive baseline — no model required, supports all tasks."""
 
     name = "Naive"
 
@@ -98,18 +94,6 @@ class Solver(BaseSolver):
     parameters = {
         "seasonality": [1],
     }
-
-    SUPPORTED_TASKS = {
-        "forecasting",
-        "classification",
-        "anomaly_detection",
-        "event_detection",
-    }
-
-    def skip(self, task, **kwargs):
-        if task not in self.SUPPORTED_TASKS:
-            return True, f"Unknown task {task!r}"
-        return False, None
 
     def set_objective(self, X_train, y_train, task, **meta):
         self.task = task

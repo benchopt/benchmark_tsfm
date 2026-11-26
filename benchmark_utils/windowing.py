@@ -19,13 +19,16 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+# Shortest history to forecast from, as fev-bench's m5_1M task.
+MIN_CONTEXT = 6
+
 
 def make_forecasting_splits(
     series: List[np.ndarray],
     prediction_length: int,
     n_windows: int = 1,
     stride: Optional[int] = None,
-    min_context: int = 1,
+    min_context: int = MIN_CONTEXT,
 ) -> Tuple[List[np.ndarray], List[List[int]], List[np.ndarray]]:
     """Create rolling-window evaluation cutoffs from a list of time series.
 
@@ -40,6 +43,7 @@ def make_forecasting_splits(
         Defaults to ``prediction_length`` (non-overlapping).
     min_context : int
         Minimum context length required before the first prediction point.
+        Windows with a shorter history are skipped.
     """
     if stride is None:
         stride = prediction_length
@@ -80,7 +84,7 @@ def build_forecasting_data(
     Keeps everything but the last ``prediction_length * n_windows`` steps
     of each series as training context, then delegates the evaluation
     windows to :func:`make_forecasting_splits` (a single window in debug
-    mode). Series shorter than ``prediction_length + 1`` are dropped.
+    mode). Series shorter than ``prediction_length + MIN_CONTEXT`` are dropped.
 
     ``y_train`` is ``None``: forecasting is self-supervised, so solvers
     that fine-tune carve their own (context, target) windows out of
@@ -94,7 +98,7 @@ def build_forecasting_data(
     test_len = prediction_length * n_windows
     X_train, full_series = [], []
     for ts in series:
-        if ts.shape[0] < prediction_length + 1:
+        if ts.shape[0] < prediction_length + MIN_CONTEXT:
             continue
         X_train.append(ts[:max(1, ts.shape[0] - test_len)])
         full_series.append(ts)

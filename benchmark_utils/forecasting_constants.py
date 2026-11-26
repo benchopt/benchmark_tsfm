@@ -11,6 +11,9 @@ adapters that normalize each source onto that canonical key.
 """
 
 import re
+import warnings
+
+from pandas.tseries.frequencies import to_offset
 
 # Metrics reported by every forecasting dataset (names from
 # benchmark_utils.metrics.ALL_METRICS).
@@ -203,3 +206,31 @@ def gift_eval_prediction_length(
     if base is None:
         base = 48
     return base * GIFT_EVAL_TERM_MULTIPLIER[term]
+
+
+# Pre-2.2 pandas aliases, rejected by pandas 3.
+_LEGACY_FREQ = {
+    "A": "YE", "Y": "YE", "AS": "YS", "Q": "QE", "M": "ME",
+    "H": "h", "T": "min", "S": "s", "L": "ms", "U": "us", "N": "ns",
+}  # fmt: skip
+_FREQ_RE = re.compile(r"^(\d*)([A-Za-z]+)(-\w+)?$")
+
+
+def safe_freq(freq):
+    """Return a pandas-usable frequency alias, defaulting to hourly.
+
+    Used to synthesize a regular index for models that need timestamps, as
+    ForecastInput carries none. Legacy aliases are mapped to
+    their current spelling, and an unusable alias falls back with a warning.
+    """
+    if not freq:
+        return "h"
+    if m := _FREQ_RE.match(freq):
+        mult, base, anchor = m.groups()
+        freq = f"{mult}{_LEGACY_FREQ.get(base, base)}{anchor or ''}"
+    try:
+        to_offset(freq)
+    except (ValueError, TypeError):
+        warnings.warn(f"Unusable freq {freq!r}, synthesizing hourly timestamps.")
+        freq = "h"
+    return freq

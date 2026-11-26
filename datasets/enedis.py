@@ -100,6 +100,8 @@ class Dataset(BaseDataset):
     """
 
     name = "Enedis"
+    # Read by the solvers' skip without loading the data.
+    task = "forecasting"
 
     requirements = ["pip::huggingface_hub", "fsspec"]
 
@@ -169,7 +171,7 @@ class Dataset(BaseDataset):
             y_test=[y_windows],
             cutoff_indexes=[cutoffs],
             covariates=covariates,
-            task="forecasting",
+            task=self.task,
             metrics=["mae", "mse", "mase", "smape"],
             prediction_length=pred_len,
             freq=self.freq,
