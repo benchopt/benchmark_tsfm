@@ -52,7 +52,12 @@ EPS = 1e-9
 # baseline exists at all. TabArena anchors default RandomForest at 1000 for
 # the same reason: a fixed, well-understood reference makes the Elo gap
 # interpretable across metrics and across re-runs.
-ANCHOR_PREFERENCES = ("seasonal naive", "seasonal_naive", "naive")
+ANCHOR_PREFERENCES = (
+    "seasonal naive",
+    "seasonal_naive",
+    "seasonalnaive",  # the name of solvers/seasonal_naive.py
+    "naive",
+)
 
 
 def _short(name: str) -> str:
@@ -144,7 +149,7 @@ def _elo_table(
     """Compute per-solver Elo + 95% bootstrap CI.
 
     Returns ``(table, anchor_name)`` where ``table`` is a DataFrame sorted by
-    Elo descending with columns (solver, elo, ci_low, ci_high, games), and
+    Elo descending with columns (name, solver, elo, ci_low, ci_high, games), and
     ``anchor_name`` is the short name of the solver pinned at ``ELO_ANCHOR``
     (or ``None`` if mean-anchoring was used).
     """
@@ -181,6 +186,7 @@ def _elo_table(
     out = (
         pd.DataFrame(
             {
+                "name": solvers,  # the index of ``mat``, unique
                 "solver": [_short(s) for s in solvers],
                 "elo": elo_full,
                 "ci_low": ci_low,

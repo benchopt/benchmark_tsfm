@@ -26,21 +26,12 @@ _METRICS: list[tuple[str, str]] = [
     ("objective_auc_roc", "AUC-ROC"),
     ("objective_f1_pa", "F1-PA"),
 ]
-_LOW_COLOUR = "#ca8a04"
-_HIGH_COLOUR = "#16a34a"
 
 
 def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
     low_d = ci_low - elo
     high_d = ci_high - elo
-    return (
-        f'<div style="line-height:1.25">'
-        f'<div style="font-weight:600">{elo:.0f}</div>'
-        f'<div style="font-size:0.85em">'
-        f'<span style="color:{_LOW_COLOUR}">{low_d:+.0f}</span>&nbsp;'
-        f'<span style="color:{_HIGH_COLOUR}">{high_d:+.0f}</span>'
-        f"</div></div>"
-    )
+    return f"**{elo:.0f}** ({low_d:+.0f} / {high_d:+.0f})"
 
 
 def _build_elo(df: pd.DataFrame, col: str) -> pd.DataFrame | None:
@@ -115,11 +106,7 @@ class Plot(BasePlot):
             cells = []
             for col, _label in _METRICS:
                 val = metric_maps[col].get(solver)
-                cells.append(
-                    f'<span style="font-weight:500">{val:.4f}</span>'
-                    if val is not None
-                    else "—"
-                )
+                cells.append(val if val is not None else "—")
             rows.append([str(rank), solver, elo_cell] + cells)
 
         return rows

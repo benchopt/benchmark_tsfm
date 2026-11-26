@@ -43,26 +43,11 @@ _TASK_LABELS: dict[str, str] = {
     "anomaly_detection": "AUC-PR",
 }
 
-_LOW_COLOUR = "#ca8a04"
-_HIGH_COLOUR = "#16a34a"
-
-
-def _metric_cell(mean_val: float) -> str:
-    """Format a mean metric value for a table cell."""
-    return f'<div style="font-weight:500">{mean_val:.4f}</div>'
-
 
 def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:
     low_d = ci_low - elo
     high_d = ci_high - elo
-    return (
-        f'<div style="line-height:1.25">'
-        f'<div style="font-weight:600">{elo:.0f}</div>'
-        f'<div style="font-size:0.85em">'
-        f'<span style="color:{_LOW_COLOUR}">{low_d:+.0f}</span>&nbsp;'
-        f'<span style="color:{_HIGH_COLOUR}">{high_d:+.0f}</span>'
-        f"</div></div>"
-    )
+    return f"**{elo:.0f}** ({low_d:+.0f} / {high_d:+.0f})"
 
 
 def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
@@ -80,10 +65,10 @@ def _build_task_aware_pivot(df: pd.DataFrame) -> pd.DataFrame:
         if len(candidates) != 1:
             continue
         task, col = candidates[0]
-        rows = grp[["solver_name", col]].dropna(subset=[col])
-        if rows["solver_name"].duplicated().any() or len(rows) < 2:
+        # Mean over repetitions, like the per-task leaderboards.
+        values = grp.groupby("solver_name")[col].mean().dropna().to_dict()
+        if len(values) < 2:
             continue
-        values = dict(zip(rows["solver_name"], rows[col]))
         # Elo treats lower as better, so flip higher-is-better metrics.
         if is_higher_better(col):
             values = {s: -v for s, v in values.items()}
@@ -189,7 +174,7 @@ class Plot(BasePlot):
         global_res = _safe_elo(global_pivot)
 
         if global_res is None:
-            return [["(insufficient data)", "—", "—", "—", "—"]]
+            return [["(insufficient data)"] + ["—"] * (2 + len(_TASK_METRICS))]
 
         # Mean metric values per solver per task
         mean_metrics: dict[str, dict[str, float]] = {}
@@ -211,7 +196,7 @@ class Plot(BasePlot):
                 if mean_val is None:
                     metric_cells.append("—")
                 else:
-                    metric_cells.append(_metric_cell(mean_val))
+                    metric_cells.append(mean_val)
             rows.append([str(rank), solver, global_cell] + metric_cells)
 
         return rows
