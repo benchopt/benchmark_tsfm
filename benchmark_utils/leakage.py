@@ -95,6 +95,7 @@ def detect_forecast_leakage(
     atol: float = 1e-6,
     seed: int = 0,
     max_series: Optional[int] = None,
+    baseline: Optional[ForecastOutput] = None,
 ) -> LeakageReport:
     """Probe a fitted forecasting adapter for target leakage.
 
@@ -120,6 +121,9 @@ def detect_forecast_leakage(
     max_series : int or None
         If given, only the first ``max_series`` series are probed — useful
         for a cheap in-loop check on large test sets.
+    baseline : ForecastOutput or None
+        The adapter's forecast on ``forecast_input``, when already computed.
+        It saves one ``predict`` call.
 
     Returns
     -------
@@ -158,7 +162,8 @@ def detect_forecast_leakage(
             n_series_skipped=skipped,
         )
 
-    baseline = adapter.predict(forecast_input)
+    if baseline is None:
+        baseline = adapter.predict(forecast_input)
     perturbed = adapter.predict(
         ForecastInput(
             x=perturbed_x,
