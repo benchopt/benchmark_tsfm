@@ -18,14 +18,22 @@ import pytest  # noqa: E402
 
 # These datasets load fine locally, but their download hosts block / rate-limit
 # CI runners (ucr: timeseriesclassification.com -> HTTP 401; mitdb: download
-# timeout). So we run them locally and skip them *only in CI*.
-_CI_FLAKY_DATASETS = {"ucr", "mitdb"}
+# timeout), or the download takes hours (the EEG datasets, several GB each).
+# So we run them locally and skip them *only in CI*.
+_CI_FLAKY_DATASETS = {
+    "ucr",
+    "mitdb",
+    "openeeg",
+    "bnci2014_001",
+    "hgd",
+    "sleepphysionet",
+}
 
 
 def _skip_flaky_in_ci(name):
     if name.lower() in _CI_FLAKY_DATASETS and os.environ.get("CI"):
         pytest.skip(
-            f"{name} download is blocked/rate-limited from CI runners (runs locally)."
+            f"{name} download is blocked or too long on CI runners (runs locally)."
         )
 
 
