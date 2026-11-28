@@ -9,7 +9,8 @@ from benchmark_utils.elo import (
     ELO_ANCHOR,
     N_BOOTSTRAP,
     _elo_table,
-    _find_anchor_idx,
+    _find_baseline,
+    _short,
 )
 from benchmark_utils.metrics import is_higher_better
 from benchopt import BasePlot
@@ -56,7 +57,7 @@ class Plot(BasePlot):
             values=objective_column,
             aggfunc="mean",
         )
-        # For higher-is-better metrics, negate so that _pairwise_wins
+        # For higher-is-better metrics, negate so that the Elo fit
         # (which treats lower as better) computes wins correctly.
         if is_higher_better(objective_column):
             pivot = -pivot
@@ -102,7 +103,8 @@ class Plot(BasePlot):
         )
         pivot = pivot.loc[:, pivot.notna().all(axis=0)]
         if pivot.shape[0] >= 2:
-            _, anchor_name = _find_anchor_idx(list(pivot.index))
+            baseline = _find_baseline(list(pivot.index))
+            anchor_name = _short(baseline) if baseline else None
 
         if anchor_name:
             anchor_desc = f"{anchor_name} = {ELO_ANCHOR:.0f}"

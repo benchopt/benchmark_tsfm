@@ -66,7 +66,7 @@ class Objective(BaseObjective):
 
     # Shared requirements across ALL solvers — solvers declare model-specific
     # extras in their own ``requirements`` list.
-    requirements = ["scikit-learn", "aeon"]
+    requirements = ["scikit-learn", "aeon", "pip::bencheval==0.1.0"]
 
     sampling_strategy = "run_once"
 

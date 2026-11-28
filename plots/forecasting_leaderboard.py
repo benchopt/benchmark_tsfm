@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 from benchopt import BasePlot
 from benchmark_utils.elo import (
-    ANCHOR_PREFERENCES,
     _elo_table,
+    _find_baseline,
     _short,
 )
 from benchmark_utils.metrics import is_higher_better
@@ -37,14 +37,6 @@ _METRICS: list[tuple[str, str]] = [
 
 _LOW_COLOUR = "#ca8a04"
 _HIGH_COLOUR = "#16a34a"
-
-
-def _find_baseline(solvers: list[str]) -> str | None:
-    for needle in ANCHOR_PREFERENCES:
-        for s in solvers:
-            if needle in s.lower():
-                return s
-    return None
 
 
 def _elo_cell(elo: float, ci_low: float, ci_high: float) -> str:

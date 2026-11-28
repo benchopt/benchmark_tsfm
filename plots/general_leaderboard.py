@@ -14,10 +14,10 @@ import numpy as np
 import pandas as pd
 from benchopt import BasePlot
 from benchmark_utils.elo import (
-    ANCHOR_PREFERENCES,
     ELO_ANCHOR,
     N_BOOTSTRAP,
     _elo_table,
+    _find_baseline,
     _short,
 )
 from benchmark_utils.metrics import is_higher_better
@@ -135,15 +135,7 @@ def _relative_wql_gmean(df: pd.DataFrame, col: str) -> dict[str, float]:
     rows["solver_name"] = rows["solver_name"].map(_short)
 
     # Find the seasonal naive row name (short)
-    all_solvers = rows["solver_name"].unique().tolist()
-    baseline = None
-    for needle in ANCHOR_PREFERENCES:
-        for s in all_solvers:
-            if needle in s.lower():
-                baseline = s
-                break
-        if baseline:
-            break
+    baseline = _find_baseline(rows["solver_name"].unique().tolist())
     if baseline is None:
         # Fall back to plain mean if no naive baseline present
         return rows.groupby("solver_name")[col].mean().to_dict()
