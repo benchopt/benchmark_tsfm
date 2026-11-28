@@ -21,7 +21,12 @@ References:
 """
 
 import numpy as np
+
+# The hub extra is imported here, so benchopt sees it missing and installs it
+import huggingface_hub  # noqa: F401
+import zarr  # noqa: F401
 from benchopt import BaseDataset
+from braindecode.datasets import BaseConcatDataset
 
 # Pinned revision, classes and subject split of each dataset, as in
 # ``open_eeg_bench.default_configs.datasets`` (v0.6.0).
@@ -58,9 +63,7 @@ class Dataset(BaseDataset):
     # Read by the solvers' skip without loading the data.
     task = "classification"
 
-    # The hub extra, listed explicitly: benchopt only checks the braindecode name,
-    # which a plain braindecode install already satisfies.
-    requirements = ["pip::braindecode[hub]", "pip::zarr>=3.1", "pip::huggingface_hub"]
+    requirements = ["pip::braindecode[hub]"]
 
     parameters = {
         "dataset_name": list(DATASETS),
@@ -82,8 +85,6 @@ class Dataset(BaseDataset):
         self._load()
 
     def _load(self):
-        from braindecode.datasets import BaseConcatDataset
-
         return BaseConcatDataset.pull_from_hub(
             f"braindecode/{self.dataset_name}",
             preload=True,
