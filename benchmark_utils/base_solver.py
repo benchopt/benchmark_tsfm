@@ -271,7 +271,8 @@ class BaseTSFMSolver(BaseSolver):
         Task metadata like prediction_length, n_classes, etc.
 
     model
-        The loaded TSFM model (cached by model_id across set_objective calls).
+        The loaded TSFM model, cached by model_id across set_objective calls
+        and kept when the same solver runs on another dataset.
 
     device
         "cuda" or "cpu", automatically selected in set_objective.
@@ -292,7 +293,8 @@ class BaseTSFMSolver(BaseSolver):
     y_train: Sequence[np.ndarray]
     meta: dict[str, Any]
 
-    model: Any
+    model: Any = None
+    _loaded_model_id: str | None = None
     device: str | torch.device
     dtype: str | torch.dtype
 
@@ -300,13 +302,9 @@ class BaseTSFMSolver(BaseSolver):
     # Objective's lazily inherited value.
     sampling_strategy = "run_once"
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__()
-        self._loaded_model_id: str | None = None
-        self.model: Any = None
-
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    # The weights do not depend on the data: benchopt keeps them when the same
+    # solver runs on another dataset, and frees them with the solver.
+    keep_state = ("model", "_loaded_model_id")
 
     @property
     @abstractmethod
