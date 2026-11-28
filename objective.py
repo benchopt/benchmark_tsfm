@@ -79,6 +79,7 @@ class Objective(BaseObjective):
                 "yahoo",
                 "mitdb",
                 "dummy-classification",
+                "dummy-eeg",
             ],
             "debug": True,
         }
