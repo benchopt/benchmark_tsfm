@@ -479,6 +479,17 @@ def _fig_to_array(fig) -> np.ndarray:
     return np.asarray(img, dtype=np.float32) / 255.0
 
 
+def _get_objective_cols(df):
+    # Every ``objective_*`` metric column, plus the synthetic "global" entry.
+    objective_cols = [
+        c
+        for c in df.columns
+        if c.startswith("objective_")
+        and c not in ("objective_name", "objective_full_name")
+    ]
+    return objective_cols + [GLOBAL_KEY]
+
+
 class Plot(BasePlot):
     """Critical Difference Diagram as a benchopt-native custom plot.
 
@@ -493,27 +504,8 @@ class Plot(BasePlot):
     type = "image"
     requirements = ["pip::scikit-posthocs"]
     options = {
-        "objective_column": ...,
+        "objective_column": _get_objective_cols,
     }
-
-    def _get_all_plots(self, df):
-        # Let benchopt do the standard ``...`` expansion first, then append
-        # a synthetic "global" objective_column that the dropdown can select.
-        # Both the options list (read by the HTML sidebar) and the plots dict
-        # (looked up by `<plot_name>_<value>`) get the extra entry.
-        plots, options = super()._get_all_plots(df)
-        opts = list(options.get("objective_column", []))
-        if GLOBAL_KEY in opts:
-            return plots, options
-        opts.append(GLOBAL_KEY)
-        options["objective_column"] = opts
-
-        data = self.get_metadata(df, objective_column=GLOBAL_KEY)
-        data["type"] = self.type
-        data["data"] = self.plot(df, objective_column=GLOBAL_KEY)
-        key = "_".join([self._get_name(), GLOBAL_KEY])
-        plots[key] = data
-        return plots, options
 
     def plot(self, df, objective_column):
         # benchopt shortens ``solver_name``, keeping the parameters that vary.
