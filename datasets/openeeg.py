@@ -58,7 +58,9 @@ class Dataset(BaseDataset):
     # Read by the solvers' skip without loading the data.
     task = "classification"
 
-    requirements = ["pip::braindecode[hub]"]
+    # The hub extra, listed explicitly: benchopt only checks the braindecode name,
+    # which a plain braindecode install already satisfies.
+    requirements = ["pip::braindecode[hub]", "pip::zarr>=3.1", "pip::huggingface_hub"]
 
     parameters = {
         "dataset_name": list(DATASETS),
