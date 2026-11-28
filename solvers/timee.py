@@ -11,6 +11,7 @@ References:
 """
 
 import numpy as np
+import torch
 from timee import TimeeClassifier, TimeeMultivariateClassifier
 
 from benchmark_utils.adapters.base import BaseTSFMAdapter
@@ -55,13 +56,26 @@ class _TimeeAdapter(BaseTSFMAdapter):
                 X_test = np.pad(
                     X_test, ((0, 0), (0, 0), (pad, 0)), constant_values=np.nan
                 )
-        # Chunks of test windows: a large batch of long multichannel windows
-        # exceeds the CUDA launch grid, which TimEE's OOM retry does not catch.
-        preds = [
-            self.model.predict(X_train, self.y_train, X_test[i : i + 64])[0]
-            for i in range(0, len(X_test), 64)
-        ]
-        return np.concatenate([np.asarray(p) for p in preds])
+        # All test windows at once, halved when the GPU refuses: a large batch of
+        # long multichannel windows exceeds the CUDA launch grid, an error that
+        # TimEE's own out-of-memory retry does not catch.
+        preds, chunks = {}, [(0, len(X_test))]
+        while chunks:
+            start, stop = chunks.pop()
+            try:
+                preds[start] = self.model.predict(
+                    X_train, self.y_train, X_test[start:stop]
+                )[0]
+            except RuntimeError as e:
+                too_big = isinstance(e, torch.OutOfMemoryError) or (
+                    "invalid configuration" in str(e)
+                )
+                if not too_big or stop - start == 1:
+                    raise
+                torch.cuda.empty_cache()
+                mid = (start + stop) // 2
+                chunks += [(start, mid), (mid, stop)]
+        return np.concatenate([np.asarray(preds[k]) for k in sorted(preds)])
 
 
 class Solver(BaseTSFMSolver):
