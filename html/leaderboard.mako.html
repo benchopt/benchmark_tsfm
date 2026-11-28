@@ -1,0 +1,596 @@
+<%!
+    import json
+    from benchmark_utils.plot_utils import build_leaderboard
+%>
+<%
+    # Escape "<" so that no name can close the script tag holding the data.
+    leaderboard = json.dumps(build_leaderboard(result['df']), allow_nan=False)
+    leaderboard = leaderboard.replace("<", "\\u003c")
+%>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TSFM Radar</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22 fill=%22none%22 stroke=%22%23008c7e%22 stroke-width=%224%22 stroke-linecap=%22round%22><circle cx=%2232%22 cy=%2232%22 r=%2228%22/><circle cx=%2232%22 cy=%2232%22 r=%2214%22/><path d=%22M32 32L50 12%22/></svg>">
+<style>
+<%text>
+/* Ink on paper, with one signal color. Teal and orange are also the two poles
+   of the win rates: the pair stays apart for color-blind readers. */
+/* Each color is light-dark(day, night): it follows the color scheme, which is
+   the one of the system unless the theme button forces it. */
+:root {
+  color-scheme: light dark;
+  --paper: light-dark(#f4f0e6, #101614);
+  --ink: light-dark(#1d1c19, #e8ebe4);
+  --ink-2: light-dark(#6a655a, #98a19a);
+  --rule: light-dark(#dcd6c7, #26302c);
+  --rule-2: light-dark(#b5ae9c, #3d4a45);
+  --dim: light-dark(#9a9486, #6b756f);
+  --accent: light-dark(#008c7e, #22b093);
+  --win: var(--accent);
+  --loss: light-dark(#d65f1a, #e67a3c);
+  --even: light-dark(#e6e1d4, #2a3430);
+  --ink-hot: light-dark(#1d1c19, #0a0f0d);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+a:hover { text-decoration-thickness: 2.5px; }
+main { max-width: 1200px; margin: 0 auto; padding: 40px 24px 56px; }
+
+/* Masthead */
+.mast { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; padding-bottom: 20px; border-bottom: 2px solid var(--ink); }
+.brand { display: flex; gap: 18px; align-items: center; }
+.mark { flex: none; width: 68px; height: 68px; }
+.mark circle { fill: none; stroke: var(--ink); stroke-width: 1.25; }
+.mark .cross { stroke: var(--rule-2); stroke-width: 1; }
+.mark .wedge { fill: var(--accent); opacity: .22; }
+.mark .beam { stroke: var(--accent); stroke-width: 1.75; stroke-linecap: round; }
+.mark .blip { fill: var(--accent); stroke: none; }
+.mark .sweep { transform-origin: 32px 32px; animation: sweep 8s linear infinite; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mark .sweep { animation: none; } }
+h1 { margin: 0; font-size: 40px; line-height: 1.1; letter-spacing: -.02em; }
+.lede { margin: 6px 0 0; max-width: 56ch; color: var(--ink-2); text-wrap: pretty; }
+.links { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; font-size: 14px; }
+/* Theme switch: three icons, the current one underlined like the current tab. */
+.themes { display: flex; gap: 6px; padding-left: 18px; border-left: 1px solid var(--rule-2); }
+.themes button { display: grid; padding: 2px 2px 5px; color: var(--ink-2); cursor: pointer; background: none; border: 0; border-bottom: 2px solid transparent; }
+.themes button:hover { color: var(--ink); }
+.themes button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.themes svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.stats { margin: 8px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.stats span { display: inline-block; white-space: nowrap; }
+.stats b { color: var(--ink); }
+.stats span + span::before { content: "·"; margin: 0 8px; }
+
+/* Task tabs: they scope everything below. */
+.tabs { display: flex; gap: 32px; margin-top: 28px; overflow-x: auto; border-bottom: 1px solid var(--rule-2); }
+.tabs button { flex: none; font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; padding: 0 0 10px; background: none; border: 0; border-bottom: 3px solid transparent; }
+.tabs button:hover { color: var(--ink); border-bottom-color: var(--rule-2); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs .task { display: block; font-size: 17px; font-weight: 600; }
+.tabs .leader { display: block; font-size: 12.5px; }
+
+/* Sections, no boxes: rules and white space do the separating. */
+section { margin-top: 48px; min-width: 0; }
+h2 { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: -.01em; }
+.sub { margin: 4px 0 16px; max-width: 95ch; font-size: 13.5px; color: var(--ink-2); text-wrap: pretty; }
+.duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 56px; }
+@media (max-width: 900px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+.scroll { overflow-x: auto; }
+
+/* Tables, ruled like in a paper: heavy rules outside, hairlines inside. */
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.ruled { border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+th, td { padding: 7px 8px; text-align: right; white-space: nowrap; }
+thead th { padding-top: 9px; font-size: 12px; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--ink); vertical-align: bottom; }
+tbody tr + tr > * { border-top: 1px solid var(--rule); }
+.name { text-align: left; }
+tbody .name { font-size: 14.5px; font-weight: 500; }
+.best { font-weight: 700; }
+.tag { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--ink-2); }
+
+.board th button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.board th button:hover, .board th[aria-sort] button { color: var(--ink); }
+.board th .caret { color: var(--accent); margin-right: 4px; }
+.board tbody tr:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+.board .pos { width: 1%; color: var(--ink-2); }
+.board .elo { width: 1%; padding-right: 16px; text-align: left; }
+.board .elo b { font-size: 15.5px; }
+.board .ci { margin-left: 7px; font-size: 11.5px; color: var(--ink-2); }
+/* Elo interval, on a scale shared by the rows of the board. */
+.board .gauge { width: 1%; text-align: center; }
+.track { position: relative; width: 130px; height: 20px; margin: 0 6px; }
+.track i { position: absolute; }
+.track .bar { top: 9px; height: 1.5px; background: var(--accent); }
+.track .bar::before, .track .bar::after { content: ""; position: absolute; top: -4px; width: 1.5px; height: 9.5px; background: var(--accent); }
+.track .bar::before { left: 0; }
+.track .bar::after { right: 0; }
+.track .dot { top: 4.5px; width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); }
+
+/* Win-rate matrix */
+.matrix { width: auto; margin: 0 auto; border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.matrix th, .matrix td { padding: 0; border: 0 !important; }
+.matrix thead th { height: 108px; padding-bottom: 6px; font-weight: 500; color: var(--ink); }
+.matrix thead span { writing-mode: vertical-rl; transform: rotate(180deg); }
+.matrix tbody th { padding-right: 10px; font-weight: 500; }
+.matrix td { min-width: 36px; height: 31px; text-align: center; border-radius: 2px; }
+.matrix td.self { background: none; color: var(--rule-2); }
+.matrix td.hot { color: var(--ink-hot); }
+.matrix td:not(.self):hover { outline: 2px solid var(--ink); outline-offset: -1px; }
+.scale { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--ink-2); }
+.scale i { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(to right in oklab, var(--loss), var(--even), var(--win)); }
+
+/* Elo against runtime */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-bottom: 8px; font-size: 12px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; border: 2px solid var(--dim); }
+.legend i.hit { background: var(--accent); border-color: var(--accent); }
+#pareto { display: block; width: 100%; height: auto; overflow: visible; }
+#pareto text { font-size: 11.5px; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+#pareto .label { font-size: 12.5px; font-weight: 500; fill: var(--ink); }
+#pareto .grid { stroke: var(--rule); }
+#pareto .frame { fill: none; stroke: var(--ink); }
+#pareto .front { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+/* Filled dots are on the front, hollow ones are beaten: shape tells it too. */
+#pareto circle { fill: var(--accent); stroke: var(--paper); stroke-width: 2; outline: none; }
+#pareto circle.beaten { fill: var(--paper); stroke: var(--dim); }
+#pareto circle.on { stroke: var(--ink); }
+
+/* Per-dataset scores */
+.scores { font-size: 13px; }
+.scores th, .scores td { padding: 6px 7px; }
+.scores thead th small { display: block; font-size: 11px; font-weight: 400; }
+.scores .name { position: sticky; left: 0; background: var(--paper); }
+
+#tip {
+  position: fixed; z-index: 10; display: none; pointer-events: none; max-width: 260px;
+  padding: 6px 10px; border-radius: 3px; font-size: 12px; line-height: 1.4;
+  background: var(--ink); color: var(--paper);
+}
+#tip strong { display: block; font-size: 13px; }
+
+.notes { display: grid; grid-template-columns: 90px minmax(0, 70ch); gap: 10px 20px; margin: 14px 0 0; }
+.notes dt { font-weight: 600; }
+.notes dd { margin: 0; color: var(--ink-2); text-wrap: pretty; }
+@media (max-width: 600px) { .notes { grid-template-columns: minmax(0, 1fr); gap: 0; } .notes dd { margin-bottom: 10px; } }
+footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--rule-2); font-size: 12.5px; color: var(--ink-2); }
+.empty { margin-top: 40px; max-width: 60ch; }
+</%text>
+</style>
+<script>
+<%text>
+// 'auto' follows the system, 'day' and 'night' force the color scheme.
+const schemes = { auto: 'light dark', day: 'light', night: 'dark' };
+let theme = 'auto';
+try {
+  const saved = localStorage.getItem('tsfm-radar-theme');
+  if (saved in schemes) theme = saved;
+} catch (e) { /* storage can be blocked: the choice is then not remembered */ }
+document.documentElement.style.colorScheme = schemes[theme];
+</%text>
+</script>
+</head>
+<body>
+<main>
+  <header class="mast">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+        <path class="cross" d="M32 2v60M2 32h60"/>
+        <circle cx="32" cy="32" r="30"/><circle cx="32" cy="32" r="20"/><circle cx="32" cy="32" r="10"/>
+        <g class="sweep">
+          <path class="wedge" d="M32 32L32 2A30 30 0 0 0 10.8 10.8Z"/>
+          <path class="beam" d="M32 32V2"/>
+        </g>
+        <circle class="blip" cx="44" cy="19" r="2.6"/>
+        <circle class="blip" cx="19" cy="39" r="2"/>
+        <circle class="blip" cx="40" cy="46" r="1.6"/>
+      </svg>
+      <div>
+        <h1>TSFM Radar</h1>
+        <p class="lede">Time series foundation models, ranked head-to-head on
+          forecasting, classification and anomaly detection.</p>
+        <p class="stats" id="stats"></p>
+      </div>
+    </div>
+    <nav class="links">
+      <a href="${home}">All runs</a>
+      <a href="${result['fname'] | h}">Raw results</a>
+      % if benchmark.url:
+      <a href="${benchmark.url | h}" target="_blank" rel="noopener">GitHub</a>
+      % endif
+      <div class="themes" id="themes" role="group" aria-label="Theme">
+        <button type="button" data-theme="auto" title="Follow the system theme" aria-label="Follow the system theme">
+          <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button type="button" data-theme="day" title="Day theme" aria-label="Day theme">
+          <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.5"/><path d="M10 1.5V4M10 16v2.5M1.5 10H4M16 10h2.5M4 4l1.8 1.8M14.2 14.2L16 16M4 16l1.8-1.8M14.2 5.8L16 4"/></svg>
+        </button>
+        <button type="button" data-theme="night" title="Night theme" aria-label="Night theme">
+          <svg viewBox="0 0 20 20"><path d="M16.5 12.2A7 7 0 0 1 7.8 3.5a7 7 0 1 0 8.7 8.7z"/></svg>
+        </button>
+      </div>
+    </nav>
+  </header>
+
+  <div id="leaderboard">
+    <div class="tabs" id="tabs" role="tablist" aria-label="Task"></div>
+
+    <section>
+      <h2 id="board-title"></h2>
+      <p class="sub" id="board-sub"></p>
+      <div class="scroll"><table class="board ruled" id="board"></table></div>
+    </section>
+
+    <div class="duo">
+      <section>
+        <h2>Head to head</h2>
+        <p class="sub">Share of the datasets on which the row model beats the
+          column model, in %.</p>
+        <div class="scroll"><table class="matrix" id="matrix"></table></div>
+        <div class="scale"><span>always loses</span><i></i><span>always wins</span></div>
+      </section>
+      <section id="pareto-card">
+        <h2>Elo against runtime</h2>
+        <p class="sub">Median runtime of a run, on a log scale. No model on the
+          line is beaten by a faster one.</p>
+        <div class="legend">
+          <span><i class="hit"></i>Best trade-offs</span>
+          <span><i></i>Beaten by a faster model</span>
+        </div>
+        <svg id="pareto" role="img" aria-label="Elo against runtime, per model"></svg>
+      </section>
+    </div>
+
+    <section>
+      <h2>Scores per dataset</h2>
+      <p class="sub">Mean over the repetitions, in the metric of each dataset.
+        Darker cells rank higher on the dataset.</p>
+      <div class="scroll"><table class="scores ruled" id="scores"></table></div>
+    </section>
+
+    <section>
+      <h2>How the ranking works</h2>
+      <dl class="notes">
+        <dt>Games</dt>
+        <dd>Each dataset is a round where every pair of models plays once: the
+          model with the better score wins, and a tie counts as half a win for
+          both.</dd>
+        <dt>Elo</dt>
+        <dd>Ratings are the Bradley&ndash;Terry maximum-likelihood fit of
+          these games, on the chess scale: a model 400 points above another is
+          expected to beat it on 10 datasets out of 11.
+          <span id="about-anchor"></span></dd>
+        <dt>Intervals</dt>
+        <dd>The 95% intervals come from 200 bootstrap resamples of the
+          datasets. When the intervals of two models overlap, their order is
+          not settled.</dd>
+        <dt>Overall</dt>
+        <dd>The overall board mixes the tasks, judging each dataset with the
+          metric of its task, and only ranks the models that ran every
+          task.</dd>
+      </dl>
+    </section>
+  </div>
+
+  <footer>Generated with <a href="https://benchopt.github.io">benchopt</a>.</footer>
+</main>
+<div id="tip" role="status"></div>
+
+<script id="leaderboard-data" type="application/json">${leaderboard}</script>
+<script>
+<%text>
+const leaderboard = JSON.parse(document.getElementById('leaderboard-data').textContent);
+const byId = id => document.getElementById(id);
+
+// DOM helpers. Children given as strings become text nodes: the names come
+// from the results, so they never go through innerHTML.
+function fill(e, props, kids) {
+  for (const [k, v] of Object.entries(props)) {
+    if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v);
+  }
+  e.append(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));
+  return e;
+}
+const el = (tag, props = {}, ...kids) => fill(document.createElement(tag), props, kids);
+const svg = (tag, props = {}, ...kids) =>
+  fill(document.createElementNS('http://www.w3.org/2000/svg', tag), props, kids);
+
+const pct = v => Math.round(v * 100) + '%';
+const signed = v => (v < 0 ? '−' : '+') + Math.abs(Math.round(v));
+function fmtTime(s) {
+  if (s < 1) return Math.round(s * 1000) + ' ms';
+  if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' s';
+  if (s < 3600) return (s / 60).toFixed(1) + ' min';
+  return (s / 3600).toFixed(1) + ' h';
+}
+const arrow = higher => (higher ? ' ↑' : ' ↓');
+
+const tip = byId('tip');
+function showTip(x, y, lead, rest) {
+  tip.replaceChildren(el('strong', {}, lead), rest);
+  tip.style.display = 'block';
+  const { width, height } = tip.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(x + 14, innerWidth - width - 8)) + 'px';
+  tip.style.top = Math.max(8, y - height - 12) + 'px';
+}
+const hideTip = () => { tip.style.display = 'none'; };
+
+let board, sort;
+
+// ---- Theme --------------------------------------------------------------
+function setTheme(next) {
+  theme = next;
+  document.documentElement.style.colorScheme = schemes[theme];
+  for (const button of byId('themes').children) {
+    button.setAttribute('aria-pressed', String(button.dataset.theme === theme));
+    button.onclick = () => setTheme(button.dataset.theme);
+  }
+  try { localStorage.setItem('tsfm-radar-theme', theme); } catch (e) { /* see above */ }
+}
+setTheme(theme);
+
+// ---- Leaderboard --------------------------------------------------------
+function boardColumns() {
+  return [
+    { id: 'elo', label: 'Elo', get: m => m.elo, higher: true },
+    { id: 'win', label: 'Win rate', get: m => m.win, higher: true, fmt: pct,
+      title: 'Share of its games won, against every other model on every dataset' },
+    { id: 'rank', label: 'Avg. rank', get: m => m.rank, higher: false, fmt: v => v.toFixed(2),
+      title: 'Mean rank over the datasets, 1 is best' },
+    ...board.columns.map((c, i) => ({
+      id: 'm' + i, label: c.label + arrow(c.higher), get: m => m.metrics[i],
+      higher: c.higher, fmt: v => v.toFixed(3),
+    })),
+    { id: 'time', label: 'Runtime', get: m => m.time, higher: false, fmt: fmtTime,
+      title: 'Median runtime of a run' },
+  ];
+}
+
+function renderBoard() {
+  const cols = boardColumns();
+  const models = board.models;
+  const lo = Math.min(...models.map(m => m.lo)), hi = Math.max(...models.map(m => m.hi));
+  const at = v => 'left:' + ((v - lo) / (hi - lo || 1)) * 100 + '%';
+
+  const sorted = [...models];
+  const col = cols.find(c => c.id === sort.id);
+  sorted.sort((a, b) => {
+    const [x, y] = [col.get(a), col.get(b)];
+    return (x === null) - (y === null) || (x - y) * sort.dir;
+  });
+
+  const head = el('tr', {}, el('th', { class: 'pos', scope: 'col' }, '#'),
+    el('th', { class: 'name', scope: 'col' }, 'Model'));
+  for (const c of cols) {
+    const active = sort.id === c.id;
+    head.append(el('th', {
+      class: c.id === 'elo' && 'elo', scope: 'col', title: c.title,
+      'aria-sort': active && (sort.dir > 0 ? 'ascending' : 'descending'),
+    }, el('button', {
+      onclick: () => {
+        // First click puts the best on top, the next one flips the order.
+        sort = { id: c.id, dir: active ? -sort.dir : (c.higher ? -1 : 1) };
+        renderBoard();
+      },
+    }, active && el('span', { class: 'caret' }, sort.dir > 0 ? '▴' : '▾'), c.label)));
+    if (c.id === 'elo') {
+      head.append(el('th', {
+        class: 'gauge', scope: 'col', title: '95% bootstrap confidence interval of the Elo',
+      }, '95% CI'));
+    }
+  }
+
+  const best = cols.map(c => {
+    const values = models.map(c.get).filter(v => v !== null);
+    return c.higher ? Math.max(...values) : Math.min(...values);
+  });
+  const rows = sorted.map(m => {
+    const row = el('tr', {},
+      el('td', { class: 'pos' }, String(models.indexOf(m) + 1)),
+      el('td', { class: 'name' }, m.name,
+        m.name === board.anchor && el('span', { class: 'tag' }, 'baseline')));
+    cols.forEach((c, i) => {
+      const v = c.get(m);
+      if (c.id === 'elo') {
+        row.append(
+          el('td', { class: 'elo' }, el('b', {}, String(Math.round(v))),
+            el('span', { class: 'ci' }, signed(m.lo - v) + ' / ' + signed(m.hi - v))),
+          el('td', { class: 'gauge', title: Math.round(m.lo) + ' to ' + Math.round(m.hi) },
+            el('div', { class: 'track' },
+              el('i', { class: 'bar', style: at(m.lo) + ';width:' + ((m.hi - m.lo) / (hi - lo || 1)) * 100 + '%' }),
+              el('i', { class: 'dot', style: at(v) }))));
+      } else {
+        row.append(el('td', { class: v !== null && v === best[i] && 'best' },
+          v === null ? '–' : c.fmt(v)));
+      }
+    });
+    return row;
+  });
+  byId('board').replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
+}
+
+// ---- Head-to-head win rates ---------------------------------------------
+function renderMatrix() {
+  const models = board.models;
+  const head = el('tr', {}, el('th'),
+    models.map(m => el('th', { scope: 'col' }, el('span', {}, m.name))));
+  const rows = models.map((m, i) => el('tr', {},
+    el('th', { scope: 'row' }, m.name),
+    m.wins.map((w, j) => {
+      if (i === j) return el('td', { class: 'self' }, '·');
+      const t = Math.abs(w - 0.5) * 2;
+      const label = m.name + ' beats ' + models[j].name + ' on ' + pct(w) + ' of the datasets';
+      return el('td', {
+        class: t > 0.6 && 'hot',
+        style: 'background: color-mix(in oklab, var(' + (w >= 0.5 ? '--win' : '--loss') + ') '
+          + Math.round(t * 100) + '%, var(--even))',
+        onpointermove: e => showTip(e.clientX, e.clientY, pct(w), label),
+        onpointerleave: hideTip,
+      }, String(Math.round(w * 100)));
+    })));
+  byId('matrix').replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
+}
+
+// ---- Elo against runtime ------------------------------------------------
+function niceStep(range, n) {
+  const raw = range / n, mag = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 5, 10].find(s => s * mag >= raw) * mag;
+}
+
+function renderPareto() {
+  const pts = board.models.filter(m => m.time !== null && m.time > 0);
+  byId('pareto-card').hidden = pts.length < 2;
+  if (pts.length < 2) return;
+
+  const W = 540, H = 380, L = 46, R = 14, T = 28, B = 42;
+  const times = pts.map(m => m.time), elos = pts.map(m => m.elo);
+  const x0 = Math.log10(Math.min(...times) / 1.3), x1 = Math.log10(Math.max(...times) * 1.3);
+  const step = niceStep(Math.max(...elos) - Math.min(...elos) || 100, 5);
+  const y0 = Math.floor(Math.min(...elos) / step) * step;
+  const y1 = Math.ceil(Math.max(...elos) / step) * step;
+  const px = t => L + ((Math.log10(t) - x0) / (x1 - x0)) * (W - L - R);
+  const py = e => H - B - ((e - y0) / (y1 - y0 || 1)) * (H - T - B);
+
+  const root = byId('pareto');
+  root.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  const nodes = [];
+  for (let e = y0; e <= y1 + 1e-9; e += step) {
+    nodes.push(svg('line', { class: 'grid', x1: L, x2: W - R, y1: py(e), y2: py(e) }),
+      svg('text', { x: L - 8, y: py(e) + 4, 'text-anchor': 'end' }, String(Math.round(e))));
+  }
+  for (let k = Math.floor(x0); k <= Math.ceil(x1); k++) {
+    for (const mult of x1 - x0 < 1 ? [1, 1.5, 2, 3, 4, 5, 7] : [1, 2, 5]) {
+      const t = mult * 10 ** k;
+      if (Math.log10(t) < x0 || Math.log10(t) > x1) continue;
+      nodes.push(svg('line', { class: 'grid', x1: px(t), x2: px(t), y1: T, y2: H - B }),
+        svg('text', { x: px(t), y: H - B + 18, 'text-anchor': 'middle' }, fmtTime(t).replace('.0', '')));
+    }
+  }
+  nodes.push(svg('path', { class: 'frame', d: 'M' + L + ',' + T + 'V' + (H - B) + 'H' + (W - R) }),
+    svg('text', { x: W - R, y: H - 4, 'text-anchor': 'end' }, 'Median runtime \u2192'),
+    svg('text', { x: 0, y: T - 14 }, '\u2191 Elo'));
+
+  // Pareto front: going from the fastest model, keep each new best Elo.
+  const front = [];
+  for (const m of [...pts].sort((a, b) => a.time - b.time || b.elo - a.elo)) {
+    if (!front.length || m.elo > front[front.length - 1].elo) front.push(m);
+  }
+  let path = '';
+  front.forEach((m, i) => {
+    path += i ? 'H' + px(m.time) + 'V' + py(m.elo) : 'M' + px(m.time) + ',' + py(m.elo);
+  });
+  nodes.push(svg('path', { class: 'front', d: path + 'H' + (W - R) }));
+
+  const describe = m => 'Elo ' + Math.round(m.elo) + ' · ' + fmtTime(m.time);
+  const dots = pts.map(m => {
+    const dot = svg('circle', {
+      cx: px(m.time), cy: py(m.elo), r: front.includes(m) ? 6 : 5, tabindex: 0,
+      class: !front.includes(m) && 'beaten',
+      'aria-label': m.name + ', ' + describe(m),
+      onfocus: () => {
+        const box = dot.getBoundingClientRect();
+        showTip(box.right, box.top, m.name, describe(m));
+      },
+      onblur: hideTip,
+    });
+    return dot;
+  });
+  // Dimmed dots first, so that the front stays on top.
+  nodes.push(...dots.filter((_, i) => !front.includes(pts[i])),
+    ...dots.filter((_, i) => front.includes(pts[i])));
+  // Only the front is labeled: the other names are a hover away and in the table.
+  // The line reaches a dot from below and leaves it to the right, so a label
+  // goes up-left or down-right of its dot, wherever nothing is in the way.
+  const taken = pts.map(m => ({ x0: px(m.time) - 7, x1: px(m.time) + 7, y0: py(m.elo) - 7, y1: py(m.elo) + 7 }));
+  const inside = s => s.x0 >= L && s.x1 <= W - R && s.y0 >= 0 && s.y1 <= H - B;
+  const clear = s => !taken.some(t => s.x0 < t.x1 && t.x0 < s.x1 && s.y0 < t.y1 && t.y0 < s.y1);
+  for (const m of front) {
+    const x = px(m.time), y = py(m.elo), w = m.name.length * 7;
+    const spots = [
+      { anchor: 'end', x: x - 9, y: y - 9, x0: x - 9 - w, x1: x - 9, y0: y - 21, y1: y - 6 },
+      { anchor: 'start', x: x + 9, y: y + 19, x0: x + 9, x1: x + 9 + w, y0: y + 7, y1: y + 22 },
+    ];
+    const spot = spots.find(s => inside(s) && clear(s)) || spots.find(inside) || spots[0];
+    taken.push(spot);
+    nodes.push(svg('text', { class: 'label', x: spot.x, y: spot.y, 'text-anchor': spot.anchor }, m.name));
+  }
+  root.replaceChildren(...nodes);
+
+  // Hover picks the nearest dot, so nobody has to aim at 12 pixels.
+  root.onpointermove = e => {
+    const box = root.getBoundingClientRect(), k = box.width / W;
+    let near = -1, dist = 60;
+    pts.forEach((m, i) => {
+      const d = Math.hypot(box.left + px(m.time) * k - e.clientX, box.top + py(m.elo) * k - e.clientY);
+      if (d < dist) { near = i; dist = d; }
+    });
+    dots.forEach((d, i) => d.classList.toggle('on', i === near));
+    if (near < 0) return hideTip();
+    showTip(e.clientX, e.clientY, pts[near].name, describe(pts[near]));
+  };
+  root.onpointerleave = () => { dots.forEach(d => d.classList.remove('on')); hideTip(); };
+}
+
+// ---- Scores per dataset -------------------------------------------------
+function renderScores() {
+  const n = board.models.length;
+  const head = el('tr', {}, el('th', { class: 'name', scope: 'col' }, 'Model'),
+    board.datasets.map(d => el('th', { scope: 'col' }, d.name,
+      el('small', {}, d.metric + arrow(d.higher)))));
+  const rows = board.models.map(m => el('tr', {},
+    el('th', { class: 'name', scope: 'row' }, m.name),
+    m.scores.map((v, j) => el('td', {
+      class: m.ranks[j] === 1 && 'best',
+      style: 'background: color-mix(in oklab, var(--accent) '
+        + Math.round(((n - m.ranks[j]) / (n - 1)) * 30) + '%, transparent)',
+      title: 'Rank ' + m.ranks[j] + ' of ' + n,
+    }, v.toFixed(3)))));
+  byId('scores').replaceChildren(el('thead', {}, head), el('tbody', {}, rows));
+}
+
+// ---- Page ---------------------------------------------------------------
+function select(key) {
+  board = leaderboard.boards.find(b => b.key === key) || leaderboard.boards[0];
+  sort = { id: 'elo', dir: -1 };
+  for (const tab of byId('tabs').children) {
+    tab.setAttribute('aria-selected', String(tab.dataset.key === board.key));
+  }
+  history.replaceState(null, '', '#' + board.key);
+
+  const metrics = [...new Set(board.datasets.map(d => d.metric))].join(', ');
+  byId('board-title').textContent = board.label + ' leaderboard';
+  byId('board-sub').textContent = board.models.length + ' models ranked on '
+    + board.datasets.length + ' datasets, by Elo on ' + metrics + '.';
+  byId('about-anchor').textContent = board.anchor
+    ? 'They are shifted so that ' + board.anchor + ' sits at 1000.'
+    : 'They are centered on 1000.';
+
+  renderBoard(); renderMatrix(); renderPareto(); renderScores();
+}
+
+const stats = [['', leaderboard.n_models, ' models'], ['', leaderboard.n_datasets, ' datasets'],
+  ['', leaderboard.boards.filter(b => b.key !== 'overall').length, ' tasks'], ['last run ', leaderboard.updated, '']];
+byId('stats').append(...stats.filter(s => s[1] !== null).map(([before, value, after]) =>
+  el('span', {}, before, el('b', {}, String(value)), after)));
+
+if (leaderboard.boards.length) {
+  byId('tabs').append(...leaderboard.boards.map(b => el('button', {
+    role: 'tab', 'data-key': b.key, onclick: () => select(b.key),
+  }, el('span', { class: 'task' }, b.label),
+     el('span', { class: 'leader' }, 'Led by ' + b.models[0].name))));
+  select(location.hash.slice(1));
+} else {
+  byId('leaderboard').replaceChildren(el('p', { class: 'card empty' },
+    'Not enough results to rank yet: a board needs at least 2 models that ran on the same 2 datasets of a task.'));
+}
+</%text>
+</script>
+</body>
+</html>
