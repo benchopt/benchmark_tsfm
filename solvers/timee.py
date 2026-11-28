@@ -55,8 +55,13 @@ class _TimeeAdapter(BaseTSFMAdapter):
                 X_test = np.pad(
                     X_test, ((0, 0), (0, 0), (pad, 0)), constant_values=np.nan
                 )
-        preds, _ = self.model.predict(X_train, self.y_train, X_test)
-        return np.asarray(preds)
+        # Chunks of test windows: a large batch of long multichannel windows
+        # exceeds the CUDA launch grid, which TimEE's OOM retry does not catch.
+        preds = [
+            self.model.predict(X_train, self.y_train, X_test[i : i + 64])[0]
+            for i in range(0, len(X_test), 64)
+        ]
+        return np.concatenate([np.asarray(p) for p in preds])
 
 
 class Solver(BaseTSFMSolver):
