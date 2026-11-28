@@ -43,21 +43,23 @@ class _StubConfig:
 class _StubForecaster:
     """Capture the packed context and emit a native fan of 21 quantiles."""
 
-    def __init__(self, batch, variates, horizon, num_heads=1):
+    def __init__(self, batch, variates, horizon, num_heads=1, known=True):
         self.batch, self.variates, self.horizon = batch, variates, horizon
         self.config = _StubConfig(num_heads)
         self.quantile_levels = NATIVE_FAN
+        self.supports_known_covariates = known
         self.calls = []
+        self.covariates = []
 
-    def forecast(self, context, prediction_length, past_covariates=None):
+    def forecast(self, context, prediction_length, **covariates):
         b, v, t = np.asarray(context).shape
         assert v == self.variates and prediction_length == self.horizon
         assert t > 0
-        assert (
-            past_covariates is None
-            or np.asarray(past_covariates).shape == (b, 2, t)
-        )
+        for name, cov in covariates.items():
+            length = t + prediction_length if "known" in name else t
+            assert cov.shape[0] == b and cov.shape[2] == length, name
         self.calls.append(b)
+        self.covariates.append(covariates)
         q = torch.arange(b * v * self.horizon * 21, dtype=torch.float32)
         q = q.reshape(b, v, self.horizon, 21)
         return type("Forecast", (), {"quantiles": q})
@@ -118,3 +120,37 @@ def test_forecast_batch_with_past_covariates():
         prediction_length=4,
     )
     assert [tuple(o.shape) for o in out] == [(4, 3, 9), (4, 3, 9)]
+
+
+def test_forecast_batch_with_known_and_categorical_covariates():
+    solver = _stub_solver()
+    # 2 past-only columns (the second categorical), 2 known (the first
+    # categorical), given over the history and the horizon.
+    cov = Covariates(
+        hist_covars=[np.arange(10.0).reshape(5, 2)],
+        future_covars=[np.arange(18.0).reshape(9, 2)],
+        hist_categorical=np.array([False, True]),
+        future_categorical=np.array([True, False]),
+    )
+    solver.forecast_batch([torch.rand(5, 3)], [cov], prediction_length=4)
+    (kw,) = solver.model.covariates
+    assert sorted(kw) == [
+        "categorical_known_covariates",
+        "categorical_past_covariates",
+        "known_covariates",
+        "past_covariates",
+    ]
+    assert kw["past_covariates"][0].tolist() == [[0, 2, 4, 6, 8]]
+    assert kw["categorical_past_covariates"][0].tolist() == [[1, 3, 5, 7, 9]]
+    assert kw["categorical_known_covariates"][0, 0].tolist() == list(range(0, 18, 2))
+    assert kw["known_covariates"][0, 0].tolist() == list(range(1, 18, 2))
+
+
+def test_forecast_batch_skips_known_covariates_if_unsupported():
+    solver = _stub_solver()
+    solver.model.supports_known_covariates = False
+    cov = Covariates(
+        future_covars=[np.zeros((9, 2))], future_categorical=np.array([True, False])
+    )
+    solver.forecast_batch([torch.rand(5, 3)], [cov], prediction_length=4)
+    assert solver.model.covariates == [{}]

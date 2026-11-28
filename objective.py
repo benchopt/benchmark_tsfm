@@ -184,7 +184,7 @@ class Objective(BaseObjective):
             y_train=self.X_train,
             seasonality=self.meta.get("seasonality", 1),
             alpha=self.meta.get("mcis_alpha", 0.05),
-            histories=self.X_test,
+            series_list=self.X_test,
             cutoff_indexes=self.cutoff_indexes,
             nan_masks=nan_masks,
             valid_mask=valid_mask,

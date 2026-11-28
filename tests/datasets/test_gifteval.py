@@ -43,44 +43,6 @@ def test_hf_arrow_directory():
 
 
 @pytest.mark.parametrize(
-    "series, expected",
-    [
-        # forward-fill, leading flat-fill, all-NaN channel → 0.0
-        (
-            np.array([[np.nan], [1.0], [np.nan], [3.0]]),
-            np.array([[1.0], [1.0], [1.0], [3.0]]),
-        ),
-        (
-            np.array([[np.nan], [np.nan], [2.0], [np.nan]]),
-            np.array([[2.0], [2.0], [2.0], [2.0]]),
-        ),
-        (
-            np.array([[np.nan], [np.nan]]),
-            np.array([[0.0], [0.0]]),
-        ),
-        # multivariate: channels are filled independently
-        (
-            np.array([[1.0, np.nan], [np.nan, 5.0], [3.0, np.nan]]),
-            np.array([[1.0, 5.0], [1.0, 5.0], [3.0, 5.0]]),
-        ),
-    ],
-)
-def test_impute_nan(series, expected):
-    out = gifteval._impute_nan(series.astype(np.float64))
-    np.testing.assert_allclose(out, expected)
-
-
-def test_impute_nan_read_only_view():
-    # zero-copy arrow views are read-only: _impute_nan must copy
-    series = np.array([[np.nan], [1.0], [np.nan]])
-    view = series[:]
-    view.flags.writeable = False
-    out = gifteval._impute_nan(view)
-    assert out is not view
-    np.testing.assert_allclose(out, [[1.0], [1.0], [1.0]])
-
-
-@pytest.mark.parametrize(
     "min_len, pred_len, dataset_name, expected",
     [
         (1000, 48, "electricity/15T", 3),

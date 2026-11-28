@@ -27,6 +27,7 @@ from sklearn.metrics import (
 )
 
 from benchmark_utils.outputs import ForecastOutput
+from benchmark_utils.windowing import windows_by_distance_to_end
 
 # ---------------------------------------------------------------------------
 # Forecasting — internal helpers
@@ -64,32 +65,51 @@ def _seasonal_naive_scale(
 
 
 def _seasonal_naive_scales_per_window(
-    histories: Iterable[np.ndarray],
+    series_list: Iterable[np.ndarray],
     cutoff_indexes: Iterable[Sequence[int]],
     seasonality: int,
     nan_masks: Sequence[np.ndarray | None] | None = None,
+    lag1_fallback: bool = True,
 ) -> np.ndarray:
     """Seasonal-naive scale per window and channel, following
     ``gluonts.ev.ts_stats.seasonal_error`` on the context available at
-    each cutoff (with its fall-back to seasonality 1 when the context
-    is shorter than the season). ``nan_masks``, when given, holds the
-    NaN locations of the original (pre-imputation) targets: diffs
-    touching an imputed point are excluded. Returns an (M, C) array in
-    the flattened series-major / cutoff-minor window order.
+    each cutoff. Diffs touching an imputed point are excluded.
+
+    Parameters
+    ----------
+    series_list : list of np.ndarray (T_i, C)
+        The full series, time first.
+    cutoff_indexes : list of list of int
+        For each series, the timesteps at which a window starts.
+    seasonality : int
+    nan_masks : list of np.ndarray (T_i, C) of bool, or None
+        NaN locations of the targets before imputation.
+    lag1_fallback : bool
+        With a context not longer than the season, fall back to
+        seasonality 1 as gluonts. Otherwise the scale is NaN, as fev.
+
+    Returns
+    -------
+    np.ndarray (M, C)
+        One scale per window, flattened series-major then cutoff-minor.
     """
     scales = []
     if nan_masks is None:
-        nan_masks = [None] * len(histories)
-    for series, cutoffs, nan_mask in zip(histories, cutoff_indexes, nan_masks):
+        nan_masks = [None] * len(series_list)
+    for series, cutoffs, nan_mask in zip(series_list, cutoff_indexes, nan_masks):
         series = np.asarray(series)
         for cutoff in cutoffs:
             ctx = series[:cutoff]
-            s = seasonality if seasonality < ctx.shape[0] else 1
+            s = seasonality
+            if seasonality >= ctx.shape[0]:
+                if not lag1_fallback:
+                    scales.append(np.full(series.shape[1], np.nan))
+                    continue
+                s = 1
             diff = np.abs(ctx[s:] - ctx[:-s])
             if nan_mask is not None:
                 nm = nan_mask[:cutoff]
-                valid = ~(nm[s:] | nm[:-s])
-                diff = np.where(valid[:, None], diff, np.nan)
+                diff = np.where(nm[s:] | nm[:-s], np.nan, diff)
                 # a channel with no valid diff gets a NaN scale, which
                 # drops its scaled errors downstream
                 with warnings.catch_warnings():
@@ -160,7 +180,7 @@ def mase(
     forecast: ForecastOutput,
     y_train: Iterable[np.ndarray] | None = None,
     seasonality: int = 1,
-    histories: Iterable[np.ndarray] | None = None,
+    series_list: Iterable[np.ndarray] | None = None,
     cutoff_indexes: Iterable[Sequence[int]] | None = None,
     nan_masks: Sequence[np.ndarray | None] | None = None,
     valid_mask: np.ndarray | None = None,
@@ -172,7 +192,7 @@ def mase(
     The scale of each window is the seasonal-naive MAE of the context
     seen at its cutoff, and the score is the mean of the per-point
     scaled errors (not the ratio of two aggregated means). Requires
-    ``histories`` and ``cutoff_indexes``; without them, falls back to a
+    ``series_list`` and ``cutoff_indexes``; without them, falls back to a
     single scale computed on ``y_train``.
 
     ``nan_masks`` holds the NaN locations of the original
@@ -182,9 +202,9 @@ def mase(
     """
     y_pred = _point_from_forecast(forecast)
     err = np.abs(y_true - y_pred)
-    if histories is not None and cutoff_indexes is not None:
+    if series_list is not None and cutoff_indexes is not None:
         scales = _seasonal_naive_scales_per_window(
-            histories, cutoff_indexes, seasonality, nan_masks
+            series_list, cutoff_indexes, seasonality, nan_masks
         )
         scaled = err / scales[:, None, :]
         if valid_mask is None:
@@ -211,19 +231,16 @@ def windows_valid_mask(
     target_shape: tuple[int, ...],
 ) -> np.ndarray:
     """Validity mask of the (M, H, C) target array: False on the points
-    that were imputed in the original targets. Takes the per-series NaN
-    masks and the jagged cutoffs, in the flattened series-major /
-    cutoff-minor window order; the per-step validity broadcasts over
-    channels."""
-    valid = np.ones(target_shape[:2], dtype=bool)
+    that were imputed in the original targets. Takes the per-series
+    (T, C) NaN masks and the jagged cutoffs, in the flattened
+    series-major / cutoff-minor window order."""
+    valid = np.ones(target_shape, dtype=bool)
     i = 0
     for nan_mask, cutoffs in zip(nan_masks, cutoff_indexes):
         for cutoff in cutoffs:
             valid[i] = ~nan_mask[cutoff : cutoff + target_shape[1]]
             i += 1
-    mask = np.empty(target_shape, dtype=bool)
-    mask[:] = valid[:, :, None]
-    return mask
+    return valid
 
 
 def smape(
@@ -317,6 +334,103 @@ def wql(
     per_level = _pinball_per_level(y_true, forecast, valid_mask)
     per_level_sum = per_level * n_elem
     return float(2.0 * per_level_sum.sum() / (len(levels) * denom))
+
+
+
+def fev_mase(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    seasonality: int = 1,
+    series_list: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    nan_masks: Sequence[np.ndarray] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """MASE aggregated as fev-bench: mean over the series and horizon of
+    each window and target channel, then over channels and windows. A
+    context not longer than the season has no scale, and its errors are
+    left out, as fev.
+
+    ``series_list`` holds the full series, (T_i, C) arrays, and
+    ``cutoff_indexes`` the start of their windows.
+    """
+    scales = _seasonal_naive_scales_per_window(
+        series_list, cutoff_indexes, seasonality, nan_masks, lag1_fallback=False
+    )
+    err = np.abs(y_true - _point_from_forecast(forecast)) / scales[:, None, :]
+    if valid_mask is not None:
+        err = np.where(valid_mask, err, np.nan)
+    # Inside a window, the masked targets and the undefined scales are NaN
+    # and left out, as fev's ``_safemean``. A channel left with no error
+    # makes the window NaN, as fev's plain mean over channels.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.mean(np.nanmean(err[w], axis=(0, 1)))
+            for w in windows_by_distance_to_end(series_list, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
+
+
+def fev_sql(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    seasonality: int = 1,
+    series_list: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    nan_masks: Sequence[np.ndarray] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """Scaled Quantile Loss, fev-bench's primary metric: the quantile loss
+    over the seasonal-naive scale, averaged over the quantile levels and
+    aggregated as :func:`fev_mase`.
+    """
+    scales = _seasonal_naive_scales_per_window(
+        series_list, cutoff_indexes, seasonality, nan_masks, lag1_fallback=False
+    )
+    q, levels = _stacked(forecast)
+    y = y_true if valid_mask is None else np.where(valid_mask, y_true, np.nan)
+    ql = 2 * np.abs((y[..., None] - q) * ((y[..., None] <= q) - levels))
+    sql = ql / scales[:, None, :, None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.mean(np.nanmean(sql[w], axis=(0, 1, 3)))
+            for w in windows_by_distance_to_end(series_list, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
+
+
+def fev_wql(
+    y_true: np.ndarray,
+    forecast: ForecastOutput,
+    series_list: Sequence[np.ndarray] | None = None,
+    cutoff_indexes: Sequence[Sequence[int]] | None = None,
+    valid_mask: np.ndarray | None = None,
+    **_,
+) -> float:
+    """WQL aggregated as fev-bench: per window and target channel, the mean
+    quantile loss over the mean ``|y|`` (floored at 1, the ``epsilon`` of
+    every fev-bench task), then averaged over channels and windows.
+
+    ``series_list`` holds the full series, (T_i, C) arrays, and
+    ``cutoff_indexes`` the start of their windows.
+    """
+    q, levels = _stacked(forecast)
+    y = y_true if valid_mask is None else np.where(valid_mask, y_true, np.nan)
+    ql = 2 * np.abs((y[..., None] - q) * ((y[..., None] <= q) - levels))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        per_window = [
+            np.mean(
+                np.nanmean(ql[w], axis=(0, 1, 3))
+                / np.maximum(np.nanmean(np.abs(y[w]), axis=(0, 1)), 1.0)
+            )
+            for w in windows_by_distance_to_end(series_list, cutoff_indexes)
+        ]
+    return float(np.mean(per_window))
 
 
 def mcis(
@@ -701,6 +815,9 @@ FORECASTING_METRICS = {
     "mcis": mcis,
     "pinball": pinball,
     "skill_score_ratio": skill_score_ratio,
+    "fev_sql": fev_sql,
+    "fev_mase": fev_mase,
+    "fev_wql": fev_wql,
 }
 
 CLASSIFICATION_METRICS = {

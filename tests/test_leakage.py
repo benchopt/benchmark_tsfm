@@ -101,16 +101,16 @@ def test_future_covariates_are_not_perturbed():
         def predict(self, x: ForecastInput) -> ForecastOutput:
             quantiles = []
             for i, (series, cutoffs) in enumerate(zip(x.x, x.cutoff_indexes)):
-                C = np.asarray(series).shape[1]
-                fc = np.asarray(x.covariates.future_covars[i])  # (H, C)
-                arr = np.stack([fc.reshape(H, C) for _ in cutoffs])[:, :, :, None]
+                fc = np.asarray(x.covariates.future_covars[i])  # (T, C)
+                arr = np.stack([fc[c : c + H] for c in cutoffs])[:, :, :, None]
                 quantiles.append(arr.astype(np.float64))
             return ForecastOutput(quantiles=quantiles, quantile_levels=(0.5,))
 
     rng = np.random.default_rng(1)
     x = [rng.standard_normal((40, 2)), rng.standard_normal((30, 2))]
     cutoff_indexes = [[20], [15]]
-    future_covars = [rng.standard_normal((H, 2)), rng.standard_normal((H, 2))]
+    # known covariates span the whole series, like the target
+    future_covars = [rng.standard_normal(s.shape) for s in x]
     fi = ForecastInput(
         x=x,
         cutoff_indexes=cutoff_indexes,

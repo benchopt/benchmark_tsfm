@@ -7,8 +7,11 @@ from benchmark_utils.metrics import (
     _seasonal_naive_scales_per_window,
     mae,
     mase,
+    fev_mase,
+    fev_sql,
     smape,
     windows_valid_mask,
+    fev_wql,
 )
 from benchmark_utils.outputs import ForecastOutput
 
@@ -22,7 +25,7 @@ def _point_forecast(point):
 
 # Two series, two channels each. A cutoff c means the context is
 # series[:c]: the point at index c is the first forecast target.
-_HISTORIES = [
+_SERIES_LIST = [
     np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0], [5.0, 50.0]]),
     np.array([[0.0, 1.0], [2.0, 3.0], [4.0, 1.0], [6.0, 3.0], [8.0, 1.0]]),
 ]
@@ -33,27 +36,29 @@ def test_scales_per_window_gluonts_semantics():
     # s0 diffs (s=2): |3-1|=2, |4-2|=2 -> 2.0; ch1: 20.0
     # s1 diffs (s=2): ch0: 4.0; ch1: 1,3,1,3 alternates at lag 2 -> 0.0,
     # and a zero scale is *undefined* (dropped), hence NaN
-    scales = _seasonal_naive_scales_per_window(_HISTORIES, _CUTOFFS, 2)
+    scales = _seasonal_naive_scales_per_window(_SERIES_LIST, _CUTOFFS, 2)
     np.testing.assert_allclose(scales, [[2.0, 20.0], [4.0, np.nan]])
 
 
 def test_scales_per_window_constant_context_is_nan():
-    histories = [np.full((5, 1), 3.0)]
-    scales = _seasonal_naive_scales_per_window(histories, [[4]], 2)
+    series_list = [np.full((5, 1), 3.0)]
+    scales = _seasonal_naive_scales_per_window(series_list, [[4]], 2)
     assert np.isnan(scales).all()
 
 
 def test_scales_per_window_short_context_falls_back_to_season_1():
-    histories = [np.array([[1.0], [4.0]])]
-    scales = _seasonal_naive_scales_per_window(histories, [[2]], 12)
+    series_list = [np.array([[1.0], [4.0]])]
+    scales = _seasonal_naive_scales_per_window(series_list, [[2]], 12)
     np.testing.assert_allclose(scales, [[3.0]])
 
 
 def test_scales_per_window_nan_mask_excludes_imputed_diffs():
-    histories = [np.array([[1.0], [np.nan], [3.0], [5.0]])]
-    nan_masks = [np.array([False, True, False, False])]
+    series_list = [np.array([[1.0], [np.nan], [3.0], [5.0]])]
+    nan_masks = [np.array([[False], [True], [False], [False]])]
     # the NaN at position 1 kills the diff |3-1|: only |5-3| remains
-    scales = _seasonal_naive_scales_per_window(histories, [[4]], 1, nan_masks=nan_masks)
+    scales = _seasonal_naive_scales_per_window(
+        series_list, [[4]], 1, nan_masks=nan_masks
+    )
     np.testing.assert_allclose(scales, [[2.0]])
 
 
@@ -64,7 +69,7 @@ def test_mase_per_window_matches_gluonts_aggregation():
     value = mase(
         y_true,
         forecast,
-        histories=_HISTORIES,
+        series_list=_SERIES_LIST,
         cutoff_indexes=_CUTOFFS,
         seasonality=2,
     )
@@ -83,7 +88,7 @@ def test_mase_legacy_fallback_without_histories():
 def test_mase_drops_undefined_scale_points():
     # s1 has a constant context: its scale is undefined, only the s0
     # points are scored
-    histories = [
+    series_list = [
         np.array([[1.0], [2.0], [3.0], [4.0]]),
         np.array([[1.0], [1.0], [1.0], [1.0]]),
     ]
@@ -91,18 +96,18 @@ def test_mase_drops_undefined_scale_points():
     y_true = np.array([[[2.0]], [[5.0]]])
     forecast = _point_forecast(np.zeros_like(y_true))
     value = mase(
-        y_true, forecast, histories=histories, cutoff_indexes=cutoffs, seasonality=1
+        y_true, forecast, series_list=series_list, cutoff_indexes=cutoffs, seasonality=1
     )
     # s0 scale = 1 (mean |diff|), s1 scale undefined -> dropped
     assert value == pytest.approx(2.0)
 
 
 def test_windows_valid_mask():
-    nan_masks = [np.array([False, False, False, True, False])]
+    nan_masks = [np.array([[0, 0], [0, 0], [0, 0], [1, 0], [0, 1]], dtype=bool)]
     cutoffs = [[3, 4]]
-    # H=1: window 0 covers index 3 (NaN -> invalid), window 1 covers 4
-    mask = windows_valid_mask(nan_masks, cutoffs, (2, 1, 1))
-    np.testing.assert_array_equal(mask, [[[False]], [[True]]])
+    # H=1: window 0 covers index 3, window 1 covers 4, channel by channel
+    mask = windows_valid_mask(nan_masks, cutoffs, (2, 1, 2))
+    np.testing.assert_array_equal(mask, [[[False, True]], [[True, False]]])
 
 
 def test_mae_valid_mask():
@@ -125,3 +130,37 @@ def test_smape_valid_mask():
     valid = np.array([[[True], [False]]])
     # both points are 0/0 or masked: undefined -> NaN
     assert np.isnan(smape(y_true, forecast, valid_mask=valid))
+
+
+def test_fev_metrics_average_per_window_and_channel():
+    # Two series ending together, one window each, two channels: the
+    # second channel has 10x the error and 10x the scale of the first.
+    series_list = [np.array([[0.0, 0.0], [1.0, 10.0], [2.0, 20.0]])] * 2
+    cutoffs = [[2], [2]]
+    y_true = np.array([[[2.0, 20.0]], [[2.0, 20.0]]])
+    forecast = _point_forecast(np.array([[[1.0, 10.0]], [[3.0, 30.0]]]))
+    # |err| / scale is 1 everywhere
+    assert fev_mase(y_true, forecast, 1, series_list, cutoffs) == pytest.approx(1.0)
+    # per channel 2 * 0.5 * mean|err| / mean|y|: 1 / 2 and 10 / 20
+    assert fev_wql(y_true, forecast, series_list, cutoffs) == pytest.approx(0.5)
+    # a point forecast has one level 0.5: QL = |err| and SQL = MASE
+    assert fev_sql(y_true, forecast, 1, series_list, cutoffs) == pytest.approx(1.0)
+
+
+def test_fev_scaled_metrics_drop_windows_shorter_than_the_season():
+    # The first series' context (3 steps) is not longer than the season (3):
+    # fev leaves it out, where the pooled MASE falls back to lag 1.
+    series_list = [np.arange(5.0)[:, None], np.tile([0.0, 2.0], 4)[:, None]]
+    cutoffs = [[3], [6]]
+    y_true = np.array([[[3.0], [4.0]], [[0.0], [2.0]]])
+    forecast = _point_forecast(y_true + 2.0)
+    # second series: scale |x_t - x_{t-3}| = 2, |err| = 2
+    assert fev_mase(y_true, forecast, 3, series_list, cutoffs) == pytest.approx(1.0)
+    assert fev_sql(y_true, forecast, 3, series_list, cutoffs) == pytest.approx(1.0)
+
+
+def test_fev_wql_floors_the_scale_at_one():
+    series_list = [np.zeros((3, 1))]
+    y_true = np.zeros((1, 1, 1))
+    forecast = _point_forecast(np.full((1, 1, 1), 0.5))
+    assert fev_wql(y_true, forecast, series_list, [[2]]) == pytest.approx(0.5)

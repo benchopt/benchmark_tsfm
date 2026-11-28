@@ -134,6 +134,26 @@ def gift_eval_seasonality(freq_alias: str) -> int:
     return seasonality if not remainder else 1
 
 
+# autogluon ``get_seasonality`` table, per pandas base alias, used by
+# fev-bench's statsforecast baselines.
+_AUTOGLUON_SEASONALITIES = {
+    "Y": 1, "Q": 4, "M": 12, "SM": 24, "W": 1, "D": 7, "B": 5,
+    "h": 24, "min": 1440, "s": 1, "ms": 1, "us": 1, "ns": 1,
+}  # fmt: skip
+
+
+def autogluon_seasonality(freq_alias: str) -> int:
+    """Seasonality of autogluon's ``get_seasonality``: the table value of the
+    base alias divided by the multiplier, or 1 when the division is not
+    exact or the alias is unknown."""
+    offset = to_offset(freq_alias)
+    # Drop the anchor and the start/end suffix: QS-OCT, ME, YE-DEC, ...
+    alias = offset.name.split("-")[0].rstrip("ESe")
+    alias = {"H": "h", "T": "min", "A": "Y", "S": "s", "BM": "M"}.get(alias, alias)
+    seasonality, remainder = divmod(_AUTOGLUON_SEASONALITIES.get(alias, 1), offset.n)
+    return seasonality if not remainder else 1
+
+
 # ---------------------------------------------------------------------------
 # GIFT-Eval term resolution
 #
