@@ -1,18 +1,16 @@
 """Synthetic EEG classification dataset for fast, offline testing.
 
-Windows of 2 s at 200 Hz over 19 electrodes of the 10-20 system, in µV. The
+Windows of 1 s at 200 Hz over 4 electrodes of the 10-20 system, in µV. The
 class is whether a 10 Hz alpha rhythm runs on the occipital electrodes, on top
 of white noise everywhere. It gives the EEG solvers a dataset to run on in CI,
-where the real EEG datasets are too long to download.
+where the real EEG datasets are too long to download. It stays small, as the
+tabular models flatten each window into channels x times features.
 """
 
 import numpy as np
 from benchopt import BaseDataset
 
-CH_NAMES = [
-    "Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "T7", "C3", "Cz",
-    "C4", "T8", "P7", "P3", "Pz", "P4", "P8", "O1", "O2",
-]  # fmt: skip
+CH_NAMES = ["Fz", "Cz", "O1", "O2"]
 SFREQ = 200.0
 
 
@@ -39,7 +37,7 @@ class Dataset(BaseDataset):
 
     def get_data(self):
         rng = np.random.default_rng(self.random_state)
-        t = np.arange(int(2 * SFREQ)) / SFREQ
+        t = np.arange(int(SFREQ)) / SFREQ
         occipital = np.isin(CH_NAMES, ["O1", "O2"])
 
         def make(n):
